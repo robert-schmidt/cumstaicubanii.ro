@@ -169,6 +169,33 @@ if ($u) {
 
         // Percentile = 0 when the user doesn't report that metric at all
         // (no debt → at the bottom of the debtor distribution = "Sub medie 🎉").
+        $pctD = $td > 0 ? (int)round(percentile_of($td, $pctDatoriiPop)) : 0;
+        $pctA = $ta > 0 ? (int)round(percentile_of($ta, $pctAssetPop))   : 0;
+        $pctN = (int)round(percentile_of($ta - $td, $pctNetPop));
+
+        // GLOBAL percentiles — same math but always against the full,
+        // unfiltered population. Used for the share message so the percentage
+        // a user posts on social media reflects their ABSOLUTE position, not
+        // their rank within an arbitrary filter slice they may have toggled.
+        if ($judet !== null || $sex !== null || $ageRange !== null) {
+            $globalRows = fetch_submissions($pdo, null, null, null);
+            $gDatorii = []; $gAsset = []; $gNet = [];
+            foreach ($globalRows as $gr) {
+                if ((int)$gr['id'] === $userSubId) continue;
+                $tdg = (float)$gr['total_datorii'];
+                $tag = (float)$gr['total_asset'];
+                if ($tdg > 0) $gDatorii[] = $tdg;
+                if ($tag > 0) $gAsset[]   = $tag;
+                $gNet[] = $tag - $tdg;
+            }
+            $pctDg = $td > 0 ? (int)round(percentile_of($td, $gDatorii)) : 0;
+            $pctAg = $ta > 0 ? (int)round(percentile_of($ta, $gAsset))   : 0;
+            $pctNg = (int)round(percentile_of($ta - $td, $gNet));
+        } else {
+            // No filter applied — global = filtered, save the work.
+            $pctDg = $pctD; $pctAg = $pctA; $pctNg = $pctN;
+        }
+
         $userLatest = [
             'submission_id' => $userSubId,
             'session_id' => $u['session_id'],
@@ -179,9 +206,12 @@ if ($u) {
             'ratio_datorii_asset' => $ta > 0 ? round($td / $ta, 3) : null,
             'by_type_datorii' => $byTypeDatorii,
             'by_type_asset' => $byTypeAsset,
-            'percentile_datorii'   => $td > 0 ? (int)round(percentile_of($td, $pctDatoriiPop)) : 0,
-            'percentile_asset'     => $ta > 0 ? (int)round(percentile_of($ta, $pctAssetPop))   : 0,
-            'percentile_net_worth' => (int)round(percentile_of($ta - $td, $pctNetPop)),
+            'percentile_datorii'          => $pctD,
+            'percentile_asset'            => $pctA,
+            'percentile_net_worth'        => $pctN,
+            'percentile_datorii_global'   => $pctDg,
+            'percentile_asset_global'     => $pctAg,
+            'percentile_net_worth_global' => $pctNg,
         ];
 }
 
