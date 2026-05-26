@@ -308,12 +308,40 @@ if ($ageRange !== null) { $bindParams[':amin'] = $ageRange[0]; $bindParams[':ama
 $breakdownStmt->execute($bindParams);
 $breakdownRows = $breakdownStmt->fetchAll();
 
+// Compute median per (kind, type) so breakdown shows the TYPICAL value, not
+// the mean (skewed by a few high-net-worth users). PHP-side since MariaDB
+// PERCENTILE_CONT requires window-only syntax that complicates the join.
+$medianStmt = $pdo->prepare(
+    'SELECT e.kind, e.type, e.amount
+     FROM entries e
+     JOIN submissions s ON s.id = e.submission_id
+     INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
+     WHERE e.status = 1' .
+     ($judet !== null ? ' AND s.judet = :judet' : '') .
+     ($sex !== null   ? ' AND s.sex = :sex'     : '') .
+     ($ageRange !== null ? ' AND s.varsta BETWEEN :amin AND :amax' : '') .
+     ' ORDER BY e.kind, e.type, e.amount ASC'
+);
+$medianStmt->execute($bindParams);
+$amountsByType = [];
+foreach ($medianStmt as $r) {
+    $amountsByType[$r['kind'] . '|' . $r['type']][] = (int)$r['amount'];
+}
+function median_of(array $sorted): int {
+    $n = count($sorted);
+    if ($n === 0) return 0;
+    $mid = intdiv($n, 2);
+    return $n % 2 === 1 ? $sorted[$mid] : (int)round(($sorted[$mid - 1] + $sorted[$mid]) / 2);
+}
+
 $breakdown = ['datorii' => [], 'asset' => []];
 foreach ($breakdownRows as $r) {
     $bucket = $r['kind'] === 'datorie' ? 'datorii' : 'asset';
+    $median = median_of($amountsByType[$r['kind'] . '|' . $r['type']] ?? []);
     $breakdown[$bucket][] = [
         'type' => $r['type'],
         'avg' => (int)round((float)$r['avg_amount']),
+        'median' => $median,
         'sum' => (int)round((float)$r['sum_amount']),
         'count' => (int)$r['n'],
     ];
