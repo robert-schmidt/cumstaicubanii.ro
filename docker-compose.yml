@@ -1,0 +1,63 @@
+services:
+  db:
+    image: mariadb:11.8
+    container_name: datorii-db
+    environment:
+      MARIADB_ROOT_PASSWORD: rootpw_change_me
+      MARIADB_DATABASE: datorii
+      MARIADB_USER: datorii
+      MARIADB_PASSWORD: datorii_secret
+      MARIADB_AUTO_UPGRADE: "1"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./backend/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./backend/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    expose:
+      - "3306"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: datorii-backend
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_NAME: datorii
+      DB_USER: datorii
+      DB_PASS: datorii_secret
+    expose:
+      - "8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    image: node:22-alpine
+    container_name: datorii-frontend
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    command: sh -c "[ -f node_modules/vite/package.json ] || npm install --no-audit --no-fund; exec npm run dev -- --host"
+    environment:
+      VITE_API_PROXY: http://backend:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  frontend_node_modules:
+  db_data:

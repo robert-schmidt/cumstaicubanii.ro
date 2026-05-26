@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#1e293b"/>
+    </linearGradient>
+    <linearGradient id="redGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ef4444"/>
+      <stop offset="1" stop-color="#dc2626"/>
+    </linearGradient>
+    <linearGradient id="greenGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#10b981"/>
+      <stop offset="1" stop-color="#059669"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)"/>
+
+  <!-- subtle grid -->
+  <g opacity="0.05" stroke="#ffffff" stroke-width="1">
+    <line x1="0" y1="180" x2="1200" y2="180"/>
+    <line x1="0" y1="320" x2="1200" y2="320"/>
+    <line x1="0" y1="460" x2="1200" y2="460"/>
+  </g>
+
+  <!-- two-bar logo -->
+  <g transform="translate(120, 220)">
+    <rect width="90" height="220" rx="18" fill="url(#redGrad)"/>
+    <rect x="120" y="-40" width="90" height="260" rx="18" fill="url(#greenGrad)"/>
+  </g>
+
+  <!-- title -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" fill="#f8fafc">
+    <text x="400" y="290" font-size="84" font-weight="700">Datorii vs Asset-uri</text>
+    <text x="400" y="350" font-size="32" fill="#94a3b8" font-weight="400">Anonim · comparativ · România</text>
+    <text x="400" y="450" font-size="28" fill="#cbd5e1" font-weight="500">Vezi unde te plasezi față de ceilalți →</text>
+  </g>
+
+  <!-- accent dot -->
+  <circle cx="385" cy="280" r="6" fill="#10b981"/>
+</svg>

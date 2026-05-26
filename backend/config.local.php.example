@@ -1,0 +1,13 @@
+<?php
+// Copy this file to `config.local.php` and fill in real credentials.
+// `config.local.php` is gitignored — never commit real secrets.
+//
+// Values here override any DB_* environment variables.
+
+return [
+    'db_host' => 'localhost',
+    'db_port' => '3306',
+    'db_name' => 'cumstaicubanii_db',
+    'db_user' => 'cumstaicubanii_user',
+    'db_pass' => 'change-me',
+];
