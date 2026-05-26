@@ -352,10 +352,26 @@ HTML;
         $sentinel = "<div id=\"lazy-sentinel\" data-offset=\"{$nextOffset}\" class=\"h-1\"></div>";
     }
 
-    // ---- Lazy-load JS ----
+    // ---- Lazy-load JS + scroll restoration after form actions ----
     $lazyJs = <<<'JS'
 <script>
 (function () {
+  // 1) Preserve scroll position across approve/disable/delete form submits.
+  //    Each form posts and the server 302s back to /admin; without this the
+  //    new page would load scrolled to top.
+  var SCROLL_KEY = 'admin_scroll_y';
+  try {
+    var saved = sessionStorage.getItem(SCROLL_KEY);
+    if (saved !== null) {
+      sessionStorage.removeItem(SCROLL_KEY);
+      window.scrollTo(0, parseFloat(saved));
+    }
+  } catch (e) {}
+  document.addEventListener('submit', function () {
+    try { sessionStorage.setItem(SCROLL_KEY, String(window.scrollY)); } catch (e) {}
+  }, true);
+
+  // 2) Lazy load: when sentinel scrolls into view, fetch next batch.
   function observeSentinel() {
     var sentinel = document.getElementById('lazy-sentinel');
     if (!sentinel) return;
@@ -372,7 +388,6 @@ HTML;
           var tmp = document.createElement('div');
           tmp.innerHTML = html;
           var list = document.getElementById('lazy-list');
-          // Drop the old sentinel from the page; new one (if any) is already in tmp
           sentinel.remove();
           while (tmp.firstChild) list.appendChild(tmp.firstChild);
           observeSentinel();
