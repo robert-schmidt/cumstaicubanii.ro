@@ -47,7 +47,7 @@ function fetch_submissions(PDO $pdo, ?string $judet, ?string $sex, ?array $ageRa
                 SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid
             ) latest ON latest.latest_id = s.id
             INNER JOIN entries e ON e.submission_id = s.id AND e.status = 1
-            WHERE s.deleted_at IS NULL";
+            WHERE s.deleted_at IS NULL AND s.is_spam = 0";
     $params = [];
     if ($judet !== null) { $sql .= ' AND s.judet = ?'; $params[] = $judet; }
     if ($sex !== null)   { $sql .= ' AND s.sex = ?';   $params[] = $sex; }
@@ -127,11 +127,11 @@ $userLatest = null;
 $userEntries = [];
 $u = null;
 if ($sid !== '') {
-    $stmt = $pdo->prepare('SELECT id, optimist, session_id FROM submissions WHERE session_id = ? AND deleted_at IS NULL LIMIT 1');
+    $stmt = $pdo->prepare('SELECT id, optimist, session_id FROM submissions WHERE session_id = ? AND deleted_at IS NULL AND is_spam = 0 LIMIT 1');
     $stmt->execute([$sid]);
     $u = $stmt->fetch() ?: null;
 } elseif ($uuid !== '') {
-    $stmt = $pdo->prepare('SELECT id, optimist, session_id FROM submissions WHERE uuid = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 1');
+    $stmt = $pdo->prepare('SELECT id, optimist, session_id FROM submissions WHERE uuid = ? AND deleted_at IS NULL AND is_spam = 0 ORDER BY id DESC LIMIT 1');
     $stmt->execute([$uuid]);
     $u = $stmt->fetch() ?: null;
 }
@@ -241,7 +241,7 @@ $judetStmt = $pdo->prepare(
                 SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
          FROM entries WHERE status = 1 GROUP BY submission_id
      ) sub ON sub.submission_id = s.id
-     WHERE s.judet IS NOT NULL AND s.deleted_at IS NULL $byJudetWhere
+     WHERE s.judet IS NOT NULL AND s.deleted_at IS NULL AND s.is_spam = 0 $byJudetWhere
      GROUP BY s.judet
      ORDER BY avg_net DESC"
 );
@@ -274,7 +274,7 @@ $domStmt = $pdo->prepare(
                 SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
          FROM entries WHERE status = 1 GROUP BY submission_id
      ) sub ON sub.submission_id = s.id
-     WHERE s.domeniu IS NOT NULL AND s.domeniu != '' AND s.deleted_at IS NULL $byDomWhere
+     WHERE s.domeniu IS NOT NULL AND s.domeniu != '' AND s.deleted_at IS NULL AND s.is_spam = 0 $byDomWhere
      GROUP BY s.domeniu
      HAVING n >= 1
      ORDER BY avg_net DESC"
@@ -312,7 +312,7 @@ $piStmt = $pdo->prepare(
                 SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
          FROM entries WHERE status = 1 GROUP BY submission_id
      ) sub ON sub.submission_id = s.id
-     WHERE s.persoane_intretinere IS NOT NULL AND s.deleted_at IS NULL $byPIWhere
+     WHERE s.persoane_intretinere IS NOT NULL AND s.deleted_at IS NULL AND s.is_spam = 0 $byPIWhere
      GROUP BY bucket
      ORDER BY CASE bucket WHEN '0' THEN 0 WHEN '1' THEN 1 WHEN '2' THEN 2 WHEN '3' THEN 3 WHEN '4+' THEN 4 END"
 );
@@ -342,7 +342,7 @@ $optStmt = $pdo->prepare(
                 SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
          FROM entries WHERE status = 1 GROUP BY submission_id
      ) sub ON sub.submission_id = s.id
-     WHERE s.deleted_at IS NULL $optWhere"
+     WHERE s.deleted_at IS NULL AND s.is_spam = 0 $optWhere"
 );
 $optStmt->execute($optParams);
 $optimistNet = []; $pesimistNet = [];
@@ -357,7 +357,7 @@ $breakdownStmt = $pdo->prepare(
      FROM entries e
      JOIN submissions s ON s.id = e.submission_id
      INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
-     WHERE e.status = 1 AND s.deleted_at IS NULL' .
+     WHERE e.status = 1 AND s.deleted_at IS NULL AND s.is_spam = 0' .
      ($judet !== null ? ' AND s.judet = :judet' : '') .
      ($sex !== null   ? ' AND s.sex = :sex'     : '') .
      ($ageRange !== null ? ' AND s.varsta BETWEEN :amin AND :amax' : '') .
@@ -378,7 +378,7 @@ $medianStmt = $pdo->prepare(
      FROM entries e
      JOIN submissions s ON s.id = e.submission_id
      INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
-     WHERE e.status = 1 AND s.deleted_at IS NULL' .
+     WHERE e.status = 1 AND s.deleted_at IS NULL AND s.is_spam = 0' .
      ($judet !== null ? ' AND s.judet = :judet' : '') .
      ($sex !== null   ? ' AND s.sex = :sex'     : '') .
      ($ageRange !== null ? ' AND s.varsta BETWEEN :amin AND :amax' : '') .
@@ -434,7 +434,7 @@ $submissionCounts = $pdo->query(
                (SELECT 1 FROM entries e WHERE e.submission_id = s.id AND e.status = 1 LIMIT 1) IS NOT NULL AS has_approved
         FROM submissions s
         INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
-        WHERE s.deleted_at IS NULL
+        WHERE s.deleted_at IS NULL AND s.is_spam = 0
      ) sub"
 )->fetch();
 $submissionsApproved = (int)($submissionCounts['approved'] ?? 0);
