@@ -585,7 +585,7 @@ const FAQ_ITEMS = [
   },
   {
     q: 'Bun, dar de ce există site-ul ăsta?',
-    a: 'Pentru că m-am pus într-o seară să-mi calculez datoriile totale și mi-a ieșit ~130k EUR. Mi-a venit să întreb: cum li se pare altora suma asta? Alții cât au? Site-ul e răspunsul la întrebarea aia, deschis ca să răspundă tuturor.',
+    a: 'Pentru că m-am pus într-o seară să-mi calculez datoriile totale și mi-a ieșit ~130k EUR. Mi-a venit să întreb: cum li se pare altora suma asta? Alții cât au? Așa a apărut tot ce vezi aici.',
   },
   {
     q: 'Ce înseamnă "asset" mai exact?',
