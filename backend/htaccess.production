@@ -1,0 +1,25 @@
+RewriteEngine On
+RewriteBase /
+
+# Personalized share landing — server-rendered OG meta tags per share URL.
+# /share?d=...&v=...&n=... → backend/api/share.php (preserving query string)
+RewriteRule ^share/?$ /api/share.php [L,QSA]
+
+# API routes go straight to PHP (do not rewrite). Existing files / dirs served as-is.
+RewriteCond %{REQUEST_URI} ^/api/ [OR]
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Everything else falls back to index.html (React Router HTML5 history).
+RewriteRule . /index.html [L]
+
+# Cache static assets aggressively (Vite filenames are content-hashed).
+<FilesMatch "\.(js|css|svg|png|jpg|jpeg|webp|woff2|woff|ttf)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+</FilesMatch>
+
+# Never cache index.html — it references the latest content-hashed bundle.
+<FilesMatch "index\.html$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+</FilesMatch>

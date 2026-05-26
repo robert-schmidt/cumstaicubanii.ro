@@ -383,20 +383,41 @@ function DomeniuList({ rows }) {
   );
 }
 
+function useIsTouchViewport() {
+  const [isTouch, setIsTouch] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(max-width: 1023.98px)').matches;
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(max-width: 1023.98px)');
+    const handler = (e) => setIsTouch(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  return isTouch;
+}
+
 function ShareCard({ user }) {
   const [toast, setToast] = useState(null);
-  const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+  const isTouchViewport = useIsTouchViewport();
+  // Web Share API exists on Chrome desktop too, but UX-wise we only want it on mobile/tablet
+  // (touch viewport). On desktop, prefer explicit platform buttons.
+  const canNativeShare = isTouchViewport && typeof navigator !== 'undefined' && typeof navigator.share === 'function';
   const tD = Math.round(100 - user.percentile_datorii);
   const tA = Math.round(100 - user.percentile_asset);
   const tN = Math.round(100 - user.percentile_net_worth);
-  const url = typeof window !== 'undefined' ? window.location.origin : '';
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  // Personalized share URL — backend renders OG meta tags from these params so
+  // FB / LinkedIn previews actually show the user's stats.
+  const shareUrl = `${origin}/share?d=${tD}&v=${tA}&n=${tN}`;
   const message = `💰 Mă situez în top ${tD}% ca datorii, top ${tA}% ca venituri, top ${tN}% ca net worth. Tu cum stai cu banii? Află aici →`;
-  const full = `${message} ${url}`;
+  const full = `${message} ${shareUrl}`;
 
   const enc = encodeURIComponent;
-  const fbUrl = `https://www.facebook.com/sharer/sharer.php?u=${enc(url)}`;
-  const twUrl = `https://twitter.com/intent/tweet?text=${enc(message)}&url=${enc(url)}`;
-  const liUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${enc(url)}`;
+  const fbUrl = `https://www.facebook.com/sharer/sharer.php?u=${enc(shareUrl)}`;
+  const twUrl = `https://twitter.com/intent/tweet?text=${enc(message)}&url=${enc(shareUrl)}`;
+  const liUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${enc(shareUrl)}`;
   const waUrl = `https://api.whatsapp.com/send?text=${enc(full)}`;
 
   function flash(msg) {
@@ -413,7 +434,7 @@ function ShareCard({ user }) {
 
   async function nativeShare() {
     try {
-      await navigator.share({ title: 'Datorii vs Asset-uri', text: message, url });
+      await navigator.share({ title: 'Datorii vs Asset-uri', text: message, url: shareUrl });
       return true;
     } catch (e) {
       // User cancel = AbortError, ignore
