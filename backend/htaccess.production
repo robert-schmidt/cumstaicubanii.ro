@@ -5,6 +5,9 @@ RewriteBase /
 # /share?d=...&v=...&n=... → backend/api/share.php (preserving query string)
 RewriteRule ^share/?$ /api/share.php [L,QSA]
 
+# Admin board for moderating entries
+RewriteRule ^admin/?$ /api/admin.php [L,QSA]
+
 # API routes go straight to PHP (do not rewrite). Existing files / dirs served as-is.
 RewriteCond %{REQUEST_URI} ^/api/ [OR]
 RewriteCond %{REQUEST_FILENAME} -f [OR]

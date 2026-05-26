@@ -36,11 +36,17 @@ if ($ageGroup !== null) {
 }
 
 function fetch_submissions(PDO $pdo, ?string $judet, ?string $sex, ?array $ageRange): array {
+    // Population = latest submission per UUID (dedupe re-submits), and only
+    // those with at least one approved entry. Each row's totals sum only
+    // status=1 entries.
     $sql = "SELECT s.id, s.uuid, s.optimist, s.judet, s.varsta, s.sex, s.created_at,
-                   COALESCE(SUM(CASE WHEN e.kind = 'datorie' THEN e.amount ELSE 0 END), 0) AS total_datorii,
-                   COALESCE(SUM(CASE WHEN e.kind = 'asset' THEN e.amount ELSE 0 END), 0) AS total_asset
+                   SUM(CASE WHEN e.kind = 'datorie' THEN e.amount ELSE 0 END) AS total_datorii,
+                   SUM(CASE WHEN e.kind = 'asset' THEN e.amount ELSE 0 END) AS total_asset
             FROM submissions s
-            LEFT JOIN entries e ON e.submission_id = s.id
+            INNER JOIN (
+                SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid
+            ) latest ON latest.latest_id = s.id
+            INNER JOIN entries e ON e.submission_id = s.id AND e.status = 1
             WHERE 1=1";
     $params = [];
     if ($judet !== null) { $sql .= ' AND s.judet = ?'; $params[] = $judet; }
@@ -55,8 +61,11 @@ function fetch_submissions(PDO $pdo, ?string $judet, ?string $sex, ?array $ageRa
     return $stmt->fetchAll();
 }
 
+// Fetch all entries for a specific submission (used for the personal "Tu" card).
+// We DO NOT filter on status here — the user sees what they entered. Aggregations
+// elsewhere filter on status=1.
 function fetch_entries_for(PDO $pdo, int $sid): array {
-    $stmt = $pdo->prepare('SELECT kind, type, amount FROM entries WHERE submission_id = ?');
+    $stmt = $pdo->prepare('SELECT kind, type, amount, status FROM entries WHERE submission_id = ?');
     $stmt->execute([$sid]);
     return $stmt->fetchAll();
 }
@@ -74,15 +83,35 @@ function median(array $nums): float {
     return $n % 2 ? (float)$nums[$m] : ($nums[$m - 1] + $nums[$m]) / 2.0;
 }
 
-function percentile_of(float $value, array $nums): float {
+/**
+ * Compute the percentile rank of $value within $nums, optionally removing the
+ * user's own data point first.
+ *
+ * Definition: percentage of OTHER population members that have a value lower
+ * than the user. Ties contribute 0.5 (mid-rank method, the most accurate way
+ * to handle equality and yield a continuous distribution).
+ *
+ * Integer comparison: amounts are stored as BIGINT and never float, so we
+ * cast both sides to int to avoid floating-point equality bugs.
+ *
+ * Self-exclusion: $excludeId, if supplied, removes one occurrence of $value
+ * from the population so a user isn't compared against themselves.
+ */
+function percentile_of(int $value, array $nums, bool $excludeSelfOnce = false): float {
     if (count($nums) === 0) return 0.0;
-    sort($nums);
-    $below = 0;
-    foreach ($nums as $n) {
-        if ($n < $value) $below++;
-        elseif ($n === $value) $below += 0.5;
+    $nums = array_map('intval', $nums);
+    if ($excludeSelfOnce) {
+        $idx = array_search($value, $nums, true);
+        if ($idx !== false) array_splice($nums, $idx, 1);
     }
-    return round(($below / count($nums)) * 100, 1);
+    $n = count($nums);
+    if ($n === 0) return 0.0;
+    $below = 0;
+    foreach ($nums as $x) {
+        if ($x < $value) $below++;
+        elseif ($x === $value) $below += 0.5;
+    }
+    return round(($below / $n) * 100, 1);
 }
 
 $rows = fetch_submissions($pdo, $judet, $sex, $ageRange);
@@ -108,30 +137,41 @@ if ($sid !== '') {
 }
 if ($u) {
         $userEntries = fetch_entries_for($pdo, (int)$u['id']);
-        $td = 0.0; $ta = 0.0;
+        $td = 0; $ta = 0;
+        $tdApproved = 0; $taApproved = 0;
+        $flaggedCount = 0;
         $byTypeDatorii = []; $byTypeAsset = [];
         foreach ($userEntries as $e) {
+            $amt = (int)$e['amount'];
+            $approved = (int)$e['status'] === 1;
+            if (!$approved) $flaggedCount++;
             if ($e['kind'] === 'datorie') {
-                $td += (float)$e['amount'];
-                $byTypeDatorii[$e['type']] = ($byTypeDatorii[$e['type']] ?? 0) + (float)$e['amount'];
+                $td += $amt;
+                if ($approved) $tdApproved += $amt;
+                $byTypeDatorii[$e['type']] = ($byTypeDatorii[$e['type']] ?? 0) + $amt;
             } else {
-                $ta += (float)$e['amount'];
-                $byTypeAsset[$e['type']] = ($byTypeAsset[$e['type']] ?? 0) + (float)$e['amount'];
+                $ta += $amt;
+                if ($approved) $taApproved += $amt;
+                $byTypeAsset[$e['type']] = ($byTypeAsset[$e['type']] ?? 0) + $amt;
             }
         }
+        // Percentile uses APPROVED totals (matches the population definition,
+        // which only sums status=1 entries per submission). Display uses raw
+        // totals so the user sees what they entered.
         $userLatest = [
             'submission_id' => (int)$u['id'],
             'session_id' => $u['session_id'],
             'optimist' => (bool)$u['optimist'],
-            'total_datorii' => (int)round($td),
-            'total_asset' => (int)round($ta),
-            'net_worth' => (int)round($ta - $td),
+            'total_datorii' => $td,
+            'total_asset' => $ta,
+            'net_worth' => $ta - $td,
+            'flagged_count' => $flaggedCount,
             'ratio_datorii_asset' => $ta > 0 ? round($td / $ta, 3) : null,
-            'by_type_datorii' => array_map(fn($v) => (int)round($v), $byTypeDatorii),
-            'by_type_asset' => array_map(fn($v) => (int)round($v), $byTypeAsset),
-            'percentile_net_worth' => round(percentile_of($ta - $td, $globalNet)),
-            'percentile_datorii' => round(percentile_of($td, $globalDatorii)),
-            'percentile_asset' => round(percentile_of($ta, $globalAsset)),
+            'by_type_datorii' => $byTypeDatorii,
+            'by_type_asset' => $byTypeAsset,
+            'percentile_net_worth' => (int)round(percentile_of($taApproved - $tdApproved, $globalNet, true)),
+            'percentile_datorii'   => (int)round(percentile_of($tdApproved, $globalDatorii, true)),
+            'percentile_asset'     => (int)round(percentile_of($taApproved, $globalAsset, true)),
         ];
 }
 
@@ -139,15 +179,16 @@ if ($u) {
 $judetRows = $pdo->query(
     "SELECT s.judet,
             COUNT(DISTINCT s.id) AS n,
-            AVG(COALESCE(sub.total_asset,0) - COALESCE(sub.total_datorii,0)) AS avg_net,
-            AVG(COALESCE(sub.total_datorii,0)) AS avg_datorii,
-            AVG(COALESCE(sub.total_asset,0)) AS avg_asset
+            AVG(sub.total_asset - sub.total_datorii) AS avg_net,
+            AVG(sub.total_datorii) AS avg_datorii,
+            AVG(sub.total_asset)   AS avg_asset
      FROM submissions s
-     LEFT JOIN (
+     INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
+     INNER JOIN (
          SELECT submission_id,
                 SUM(CASE WHEN kind = 'datorie' THEN amount ELSE 0 END) AS total_datorii,
                 SUM(CASE WHEN kind = 'asset' THEN amount ELSE 0 END) AS total_asset
-         FROM entries GROUP BY submission_id
+         FROM entries WHERE status = 1 GROUP BY submission_id
      ) sub ON sub.submission_id = s.id
      WHERE s.judet IS NOT NULL
      GROUP BY s.judet
@@ -168,15 +209,16 @@ $byJudet = array_map(function ($r) {
 $domeniuRows = $pdo->query(
     "SELECT s.domeniu,
             COUNT(DISTINCT s.id) AS n,
-            AVG(COALESCE(sub.total_asset,0) - COALESCE(sub.total_datorii,0)) AS avg_net,
-            AVG(COALESCE(sub.total_datorii,0)) AS avg_datorii,
-            AVG(COALESCE(sub.total_asset,0)) AS avg_asset
+            AVG(sub.total_asset - sub.total_datorii) AS avg_net,
+            AVG(sub.total_datorii) AS avg_datorii,
+            AVG(sub.total_asset)   AS avg_asset
      FROM submissions s
-     LEFT JOIN (
+     INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
+     INNER JOIN (
          SELECT submission_id,
                 SUM(CASE WHEN kind = 'datorie' THEN amount ELSE 0 END) AS total_datorii,
-                SUM(CASE WHEN kind = 'asset' THEN amount ELSE 0 END) AS total_asset
-         FROM entries GROUP BY submission_id
+                SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
+         FROM entries WHERE status = 1 GROUP BY submission_id
      ) sub ON sub.submission_id = s.id
      WHERE s.domeniu IS NOT NULL AND s.domeniu != ''
      GROUP BY s.domeniu
@@ -198,20 +240,20 @@ $byDomeniu = array_map(function ($r) {
 $piRows = $pdo->query(
     "SELECT
         CASE
-            WHEN s.persoane_intretinere IS NULL THEN NULL
             WHEN s.persoane_intretinere >= 4 THEN '4+'
             ELSE CAST(s.persoane_intretinere AS CHAR)
         END AS bucket,
         COUNT(DISTINCT s.id) AS n,
-        AVG(COALESCE(sub.total_asset,0) - COALESCE(sub.total_datorii,0)) AS avg_net,
-        AVG(COALESCE(sub.total_datorii,0)) AS avg_datorii,
-        AVG(COALESCE(sub.total_asset,0)) AS avg_asset
+        AVG(sub.total_asset - sub.total_datorii) AS avg_net,
+        AVG(sub.total_datorii) AS avg_datorii,
+        AVG(sub.total_asset)   AS avg_asset
      FROM submissions s
-     LEFT JOIN (
+     INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
+     INNER JOIN (
          SELECT submission_id,
                 SUM(CASE WHEN kind = 'datorie' THEN amount ELSE 0 END) AS total_datorii,
-                SUM(CASE WHEN kind = 'asset' THEN amount ELSE 0 END) AS total_asset
-         FROM entries GROUP BY submission_id
+                SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
+         FROM entries WHERE status = 1 GROUP BY submission_id
      ) sub ON sub.submission_id = s.id
      WHERE s.persoane_intretinere IS NOT NULL
      GROUP BY bucket
@@ -231,13 +273,14 @@ $byPI = array_map(function ($r) {
 // Optimism correlation
 $optStmt = $pdo->query(
     "SELECT s.optimist,
-            COALESCE(sub.total_asset,0) - COALESCE(sub.total_datorii,0) AS net
+            sub.total_asset - sub.total_datorii AS net
      FROM submissions s
-     LEFT JOIN (
+     INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
+     INNER JOIN (
          SELECT submission_id,
                 SUM(CASE WHEN kind = 'datorie' THEN amount ELSE 0 END) AS total_datorii,
-                SUM(CASE WHEN kind = 'asset' THEN amount ELSE 0 END) AS total_asset
-         FROM entries GROUP BY submission_id
+                SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
+         FROM entries WHERE status = 1 GROUP BY submission_id
      ) sub ON sub.submission_id = s.id"
 );
 $optimistNet = []; $pesimistNet = [];
@@ -251,7 +294,8 @@ $breakdownStmt = $pdo->prepare(
     'SELECT e.kind, e.type, AVG(e.amount) AS avg_amount, SUM(e.amount) AS sum_amount, COUNT(*) AS n
      FROM entries e
      JOIN submissions s ON s.id = e.submission_id
-     WHERE 1=1' .
+     INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
+     WHERE e.status = 1' .
      ($judet !== null ? ' AND s.judet = :judet' : '') .
      ($sex !== null   ? ' AND s.sex = :sex'     : '') .
      ($ageRange !== null ? ' AND s.varsta BETWEEN :amin AND :amax' : '') .

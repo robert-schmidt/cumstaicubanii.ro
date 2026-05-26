@@ -23,9 +23,11 @@ CREATE TABLE IF NOT EXISTS entries (
     kind ENUM('datorie','asset') NOT NULL,
     type VARCHAR(64) NOT NULL,
     amount BIGINT NOT NULL,
+    status TINYINT(1) NOT NULL DEFAULT 1,
     KEY idx_entries_submission (submission_id),
     KEY idx_entries_kind (kind),
     KEY idx_entries_type (type),
+    KEY idx_entries_status (status),
     CONSTRAINT fk_entries_submission
         FOREIGN KEY (submission_id) REFERENCES submissions(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
