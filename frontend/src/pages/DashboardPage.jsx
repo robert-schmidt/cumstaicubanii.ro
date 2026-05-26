@@ -637,10 +637,6 @@ function CoverageDistribution({ yes, total, labelYes, labelNo, colorYes }) {
           <span className="text-sm text-slate-500 w-14 text-right">({no})</span>
         </div>
       </div>
-      <p className="text-xs text-slate-500 pt-3 mt-3 border-t border-slate-100">
-        Total: <strong className="text-slate-700">{total}</strong> răspunsuri{total > 0 ? '' : ''}.
-        1 sesiune = 1 vot, nu se contează entries individuale.
-      </p>
     </div>
   );
 }
