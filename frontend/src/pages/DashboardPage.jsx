@@ -58,10 +58,10 @@ export default function DashboardPage({ uuid, sid }) {
       </section>
 
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card title="Datorii medii pe tipuri (toți utilizatorii)">
+        <Card title="Datorii pe tipuri — utilizatorul median">
           <TypeBars data={breakdown.datorii} color="#ef4444" userByType={user ? user.by_type_datorii : null} />
         </Card>
-        <Card title="Asset-uri medii pe tipuri (toți utilizatorii)">
+        <Card title="Asset-uri pe tipuri — utilizatorul median">
           <TypeBars data={breakdown.asset} color="#10b981" userByType={user ? user.by_type_asset : null} />
         </Card>
       </section>
@@ -176,16 +176,21 @@ function Stat({ label, value, accent = '' }) {
 }
 
 function Comparison({ user, population }) {
+  // Use medians, not means. Means are heavily skewed by a few high-net-worth
+  // outliers in financial data; the median user is the more honest baseline.
   const rows = [
-    { label: 'Datorii', mine: user.total_datorii, avg: population.avg_datorii, color: '#ef4444' },
-    { label: 'Asset-uri', mine: user.total_asset, avg: population.avg_asset, color: '#10b981' },
-    { label: 'Net worth', mine: user.net_worth, avg: population.avg_net_worth, color: '#0ea5e9' },
+    { label: 'Datorii',   mine: user.total_datorii, avg: population.median_datorii,   color: '#ef4444' },
+    { label: 'Asset-uri', mine: user.total_asset,   avg: population.median_asset,     color: '#10b981' },
+    { label: 'Net worth', mine: user.net_worth,     avg: population.median_net_worth, color: '#0ea5e9' },
   ];
   return (
-    <Card title="Tu vs media filtrată">
+    <Card title="Tu vs utilizatorul median">
       <div className="space-y-5">
         {rows.map(r => <CompareBar key={r.label} {...r} />)}
       </div>
+      <p className="mt-4 text-xs text-slate-500">
+        Folosim mediana (utilizatorul „tipic") în loc de medie. Media e umflată de câteva valori extreme; mediana arată cu cine te compari de fapt.
+      </p>
     </Card>
   );
 }
@@ -196,7 +201,7 @@ function CompareBar({ label, mine, avg, color }) {
   const avgPct = Math.min(100, (Math.abs(avg) / max) * 100);
   const diff = mine - avg;
   const better = (label === 'Datorii') ? diff < 0 : diff > 0;
-  const position = diff === 0 ? 'la medie' : (diff > 0 ? 'peste medie' : 'sub medie');
+  const position = diff === 0 ? 'la median' : (diff > 0 ? 'peste median' : 'sub median');
   const sign = diff > 0 ? '+' : (diff < 0 ? '−' : '');
   return (
     <div>
@@ -208,16 +213,17 @@ function CompareBar({ label, mine, avg, color }) {
       </div>
       <div className="space-y-1.5">
         <Row label="tu" value={mine} pct={minePct} color={color} bold />
-        <Row label="medie" value={avg} pct={avgPct} color="#cbd5e1" />
+        <Row label="median" value={avg} pct={avgPct} color="#cbd5e1" />
       </div>
     </div>
   );
 }
 
 function Row({ label, value, pct, color, bold = false }) {
+  // label e fie "tu" fie "median" (cu cele 6 chars o lăsăm la w-14 din mai sus)
   return (
     <div className="flex items-center gap-3">
-      <span className="w-12 text-xs text-slate-500">{label}</span>
+      <span className="w-14 text-xs text-slate-500">{label}</span>
       <div className="flex-1 h-2.5 rounded-full bg-slate-100 overflow-hidden">
         <motion.div
           initial={{ width: 0 }} animate={{ width: pct + '%' }} transition={{ duration: 0.6, ease: 'easeOut' }}
@@ -318,12 +324,15 @@ function JudetList({ rows, userJudet }) {
 
 function TypeBars({ data, color, userByType }) {
   if (!data || !data.length) return <p className="text-sm text-slate-500">Fără date.</p>;
-  const sorted = [...data].sort((a, b) => b.avg - a.avg);
-  const max = Math.max(1, ...sorted.map(r => r.avg));
+  // Sort and chart by MEDIAN, not mean. Fall back to avg if median field is missing.
+  const m = (r) => (r.median ?? r.avg ?? 0);
+  const sorted = [...data].sort((a, b) => m(b) - m(a));
+  const max = Math.max(1, ...sorted.map(m));
   return (
     <div className="space-y-2">
       {sorted.map(r => {
-        const pct = (r.avg / max) * 100;
+        const ref = m(r);
+        const pct = (ref / max) * 100;
         const mine = userByType ? userByType[r.type] : null;
         const minePct = mine ? Math.min(100, (mine / max) * 100) : 0;
         return (
@@ -331,7 +340,7 @@ function TypeBars({ data, color, userByType }) {
             <div className="flex items-baseline justify-between text-sm mb-1">
               <span className="text-slate-700">{r.type}</span>
               <span className="text-slate-500">
-                medie <span className="font-medium text-slate-800">{formatRon(r.avg)}</span>
+                median <span className="font-medium text-slate-800">{formatRon(ref)}</span>
                 <span className="ml-2 text-xs text-slate-400">n={r.count}</span>
               </span>
             </div>
