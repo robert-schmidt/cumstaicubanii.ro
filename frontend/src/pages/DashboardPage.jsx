@@ -251,7 +251,8 @@ function Percentiles({ user }) {
 
 function PercentileCard({ label, pct, betterHigh }) {
   const pctR = Math.round(pct);
-  const topR = Math.round(100 - pct);
+  // Same clamp as in the share string — "Top 0%" is nonsense.
+  const topR = Math.max(1, Math.round(100 - pct));
   const headline = betterHigh
     ? (pct >= 50 ? `Top ${topR}%` : `Sub medie`)
     : (pct <= 50 ? `Sub medie 🎉` : `Top ${topR}% (datorii mari)`);
@@ -420,9 +421,12 @@ function ShareCard({ user }) {
   // Web Share API exists on Chrome desktop too, but UX-wise we only want it on mobile/tablet
   // (touch viewport). On desktop, prefer explicit platform buttons.
   const canNativeShare = isTouchViewport && typeof navigator !== 'undefined' && typeof navigator.share === 'function';
-  const tD = Math.round(100 - user.percentile_datorii);
-  const tA = Math.round(100 - user.percentile_asset);
-  const tN = Math.round(100 - user.percentile_net_worth);
+  // Clamp to ≥ 1: a percentile of 100 would render as "top 0%" which is
+  // nonsense ("top of the top"). With small filtered populations, hitting 100
+  // is easy. The smallest meaningful "top" is 1%.
+  const tD = Math.max(1, Math.round(100 - user.percentile_datorii));
+  const tA = Math.max(1, Math.round(100 - user.percentile_asset));
+  const tN = Math.max(1, Math.round(100 - user.percentile_net_worth));
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   // Personalized share URL — backend renders OG meta tags from these params so
   // FB / LinkedIn previews actually show the user's stats.
