@@ -420,7 +420,7 @@ function ShareCard({ user }) {
   // Personalized share URL — backend renders OG meta tags from these params so
   // FB / LinkedIn previews actually show the user's stats.
   const shareUrl = `${origin}/share?d=${tD}&v=${tA}&n=${tN}`;
-  const message = `💰 Mă situez în top ${tD}% ca datorii, top ${tA}% ca venituri, top ${tN}% ca net worth. Tu cum stai cu banii? Află aici →`;
+  const message = `💰 Mă situez în top ${tD}% ca datorii, top ${tA}% ca asset-uri, top ${tN}% ca net worth. Tu cum stai cu banii? Află aici →`;
   const full = `${message} ${shareUrl}`;
 
   const enc = encodeURIComponent;

@@ -1,14 +1,12 @@
 <?php
-// Admin board for moderating entries (approve / disable).
+// Admin board for moderating entries (approve / disable, grouped by submission).
 //
 // Auth: bcrypt hash stored in config.local.php under `admin_password_hash`
 //       (config.local.php is gitignored — secrets never reach git).
-// Routes everything through one file, server-side rendered HTML. No JS needed.
 
 declare(strict_types=1);
 require __DIR__ . '/../db.php';
 
-// Session config — name it specifically so it doesn't collide with anything else
 session_name('datorii_admin');
 session_set_cookie_params([
     'lifetime' => 0,
@@ -19,9 +17,7 @@ session_set_cookie_params([
 ]);
 session_start();
 
-$cfg = db_config();
 $adminHash = null;
-// Reach the local config directly — db_config() doesn't expose unrelated keys
 if (file_exists(__DIR__ . '/../config.local.php')) {
     $local = require __DIR__ . '/../config.local.php';
     if (is_array($local)) $adminHash = $local['admin_password_hash'] ?? null;
@@ -36,18 +32,15 @@ if (empty($adminHash)) {
     exit;
 }
 
-if (empty($_SESSION['csrf'])) {
-    $_SESSION['csrf'] = bin2hex(random_bytes(16));
-}
-$csrf = $_SESSION['csrf'];
+if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
+$csrf   = $_SESSION['csrf'];
 $isAuth = !empty($_SESSION['admin']);
 
 $action = $_GET['action'] ?? $_POST['action'] ?? null;
 $method = $_SERVER['REQUEST_METHOD'];
 
-// --- POST actions ---
+// -------- POST actions --------
 if ($method === 'POST' && $action === 'login') {
-    // Throttle login attempts per IP (5 / 10min)
     rate_limit('admin-login:' . client_ip(), 5, 600);
     $pw = (string)($_POST['password'] ?? '');
     if (password_verify($pw, $adminHash)) {
@@ -68,24 +61,31 @@ if ($action === 'logout') {
     exit;
 }
 
-if ($method === 'POST' && $action === 'toggle') {
+if ($method === 'POST' && in_array($action, ['toggle', 'bulk_approve', 'bulk_disable'], true)) {
     if (!$isAuth) { http_response_code(403); exit; }
     if (!hash_equals($csrf, (string)($_POST['csrf'] ?? ''))) {
         http_response_code(403); exit('Bad CSRF token');
     }
-    $id = (int)($_POST['id'] ?? 0);
-    if ($id > 0) {
-        $pdo = db();
-        $stmt = $pdo->prepare('UPDATE entries SET status = 1 - status WHERE id = ?');
-        $stmt->execute([$id]);
+    $pdo = db();
+    if ($action === 'toggle') {
+        $id = (int)($_POST['id'] ?? 0);
+        if ($id > 0) {
+            $pdo->prepare('UPDATE entries SET status = 1 - status WHERE id = ?')->execute([$id]);
+        }
+    } else {
+        $sid = (int)($_POST['submission_id'] ?? 0);
+        $newStatus = $action === 'bulk_approve' ? 1 : 0;
+        if ($sid > 0) {
+            $pdo->prepare('UPDATE entries SET status = ? WHERE submission_id = ?')->execute([$newStatus, $sid]);
+        }
     }
     $back = (string)($_POST['back'] ?? '/admin');
-    if (!str_starts_with($back, '/')) $back = '/admin'; // open-redirect guard
+    if (!str_starts_with($back, '/')) $back = '/admin';
     header('Location: ' . $back);
     exit;
 }
 
-// --- GET render ---
+// -------- GET render --------
 header('Content-Type: text/html; charset=utf-8');
 header('X-Robots-Tag: noindex, nofollow');
 
@@ -94,7 +94,6 @@ if (!$isAuth) {
     exit;
 }
 
-// Authenticated — render entries list
 render_admin();
 
 // =============================================================================
@@ -153,43 +152,86 @@ function render_admin(): void {
     global $csrf;
     $pdo = db();
 
+    // -------- Filters & sort --------
     $kind   = (string)($_GET['kind']   ?? '');
     $type   = (string)($_GET['type']   ?? '');
     $status = $_GET['status'] ?? '';
+    $sort   = (string)($_GET['sort']   ?? 'recent');
     $page   = max(1, (int)($_GET['page'] ?? 1));
-    $perPage = 50;
+    $perPage = 30;
 
     $allowedKinds  = ['datorie', 'asset'];
     $allowedStatus = ['0', '1'];
-    if ($kind   !== '' && !in_array($kind, $allowedKinds, true))      $kind = '';
+    $allowedSorts  = ['recent', 'amount_desc', 'amount_asc'];
+    if ($kind   !== '' && !in_array($kind, $allowedKinds, true))           $kind = '';
     if ($status !== '' && !in_array((string)$status, $allowedStatus, true)) $status = '';
+    if (!in_array($sort, $allowedSorts, true))                              $sort = 'recent';
 
-    $where = []; $params = [];
-    if ($kind   !== '') { $where[] = 'e.kind = ?';   $params[] = $kind; }
-    if ($type   !== '') { $where[] = 'e.type = ?';   $params[] = $type; }
-    if ($status !== '') { $where[] = 'e.status = ?'; $params[] = (int)$status; }
+    // Filter clauses live in EXISTS subqueries so a submission shows if it has
+    // at least one matching entry. (All its entries are then rendered, with
+    // matching/flagged ones highlighted in context.)
+    $where = [];
+    $params = [];
+    if ($kind !== '') {
+        $where[] = 'EXISTS (SELECT 1 FROM entries e WHERE e.submission_id = s.id AND e.kind = ?)';
+        $params[] = $kind;
+    }
+    if ($type !== '') {
+        $where[] = 'EXISTS (SELECT 1 FROM entries e WHERE e.submission_id = s.id AND e.type = ?)';
+        $params[] = $type;
+    }
+    if ($status !== '') {
+        $where[] = 'EXISTS (SELECT 1 FROM entries e WHERE e.submission_id = s.id AND e.status = ?)';
+        $params[] = (int)$status;
+    }
     $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
-    // Total count
-    $cntStmt = $pdo->prepare("SELECT COUNT(*) FROM entries e JOIN submissions s ON s.id = e.submission_id $whereSql");
-    $cntStmt->execute($params);
-    $total = (int)$cntStmt->fetchColumn();
-    $pages = max(1, (int)ceil($total / $perPage));
+    // Order clause varies by sort mode.
+    if ($sort === 'amount_desc') {
+        $orderSql = 'ORDER BY (SELECT MAX(amount) FROM entries e WHERE e.submission_id = s.id) DESC, s.id DESC';
+    } elseif ($sort === 'amount_asc') {
+        $orderSql = 'ORDER BY (SELECT MAX(amount) FROM entries e WHERE e.submission_id = s.id) ASC, s.id DESC';
+    } else {
+        $orderSql = 'ORDER BY s.id DESC';
+    }
+
+    // Total submissions matching filters
+    $cnt = $pdo->prepare("SELECT COUNT(*) FROM submissions s $whereSql");
+    $cnt->execute($params);
+    $totalSubs = (int)$cnt->fetchColumn();
+    $pages = max(1, (int)ceil($totalSubs / $perPage));
     $page  = min($page, $pages);
-
     $offset = ($page - 1) * $perPage;
-    $sql = "SELECT e.id, e.submission_id, e.kind, e.type, e.amount, e.status,
-                   s.created_at, s.judet, s.varsta, s.domeniu, s.optimist
-            FROM entries e
-            JOIN submissions s ON s.id = e.submission_id
-            $whereSql
-            ORDER BY e.id DESC
-            LIMIT $perPage OFFSET $offset";
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute($params);
-    $rows = $stmt->fetchAll();
 
-    // Aggregate counts
+    // Fetch the page of submissions.
+    $subSql = "SELECT s.id, s.uuid, s.session_id, s.created_at, s.judet, s.varsta,
+                      s.sex, s.persoane_intretinere, s.domeniu, s.optimist
+               FROM submissions s
+               $whereSql
+               $orderSql
+               LIMIT $perPage OFFSET $offset";
+    $sStmt = $pdo->prepare($subSql);
+    $sStmt->execute($params);
+    $submissions = $sStmt->fetchAll();
+
+    // Fetch all entries for the visible submissions in one query.
+    $entriesBySubmission = [];
+    if ($submissions) {
+        $subIds = array_column($submissions, 'id');
+        $in = str_repeat('?,', count($subIds) - 1) . '?';
+        $eStmt = $pdo->prepare(
+            "SELECT id, submission_id, kind, type, amount, status
+             FROM entries
+             WHERE submission_id IN ($in)
+             ORDER BY status ASC, amount DESC"
+        );
+        $eStmt->execute($subIds);
+        foreach ($eStmt as $row) {
+            $entriesBySubmission[$row['submission_id']][] = $row;
+        }
+    }
+
+    // -------- Aggregate stats for header --------
     $summary = $pdo->query("SELECT status, COUNT(*) c FROM entries GROUP BY status")->fetchAll();
     $approved = 0; $flagged = 0;
     foreach ($summary as $r) {
@@ -197,38 +239,35 @@ function render_admin(): void {
         else $flagged = (int)$r['c'];
     }
 
-    // Type dropdown options (union of datorie + asset types from db.php)
     $typesAll = array_merge(DATORII_TYPES, ASSET_TYPES);
+    $backUrl = '/admin?' . http_build_query(array_filter([
+        'kind' => $kind, 'type' => $type, 'status' => $status, 'sort' => $sort, 'page' => $page,
+    ], fn($v) => $v !== '' && $v !== null));
 
-    $backUrl = '/admin?' . http_build_query(array_filter(['kind' => $kind, 'type' => $type, 'status' => $status, 'page' => $page]));
-
-    // Header
+    // -------- Render --------
     $header = <<<HTML
 <header class="bg-white border-b border-slate-200 sticky top-0 z-10">
   <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
     <div class="flex items-baseline gap-3">
       <h1 class="font-semibold">Admin · cumstaicubanii.ro</h1>
-      <span class="text-xs text-slate-500">{$approved} aprobate · {$flagged} flagged · <strong>{$total}</strong> filtrate</span>
+      <span class="text-xs text-slate-500">
+        {$approved} entries aprobate · {$flagged} flagged · <strong>{$totalSubs}</strong> submissions filtrate
+      </span>
     </div>
     <a href="/admin?action=logout" class="text-sm text-slate-500 hover:text-rose-600">Ieși</a>
   </div>
 </header>
 HTML;
 
-    // Filters
-    $kindOpts = '<option value="">Toate</option>' .
-        '<option value="datorie"' . ($kind === 'datorie' ? ' selected' : '') . '>datorie</option>' .
-        '<option value="asset"'   . ($kind === 'asset'   ? ' selected' : '') . '>asset</option>';
-
-    $typeOpts = '<option value="">Toate tipurile</option>';
-    foreach ($typesAll as $t) {
-        $sel = $type === $t ? ' selected' : '';
-        $typeOpts .= '<option value="' . h($t) . '"' . $sel . '>' . h($t) . '</option>';
-    }
-
-    $statusOpts = '<option value="">Toate</option>' .
-        '<option value="1"' . ($status === '1' ? ' selected' : '') . '>aprobate</option>' .
-        '<option value="0"' . ($status === '0' ? ' selected' : '') . '>flagged</option>';
+    // Filter dropdown options
+    $kindOpts   = render_options(['' => 'Toate'] + ['datorie' => 'datorie', 'asset' => 'asset'], $kind);
+    $typeOpts   = render_options(['' => 'Toate tipurile'] + array_combine($typesAll, $typesAll), $type);
+    $statusOpts = render_options(['' => 'Toate', '1' => 'aprobate', '0' => 'flagged'], (string)$status);
+    $sortOpts   = render_options([
+        'recent'      => 'Cele mai recente',
+        'amount_desc' => 'Suma (mare → mică)',
+        'amount_asc'  => 'Suma (mică → mare)',
+    ], $sort);
 
     $filters = <<<HTML
 <form method="GET" action="/admin" class="bg-white border-b border-slate-200">
@@ -242,71 +281,37 @@ HTML;
     <label class="text-xs text-slate-600">Status
       <select name="status" class="block mt-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm">{$statusOpts}</select>
     </label>
-    <button type="submit" class="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm">Filtrează</button>
+    <label class="text-xs text-slate-600">Sortare
+      <select name="sort" class="block mt-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm">{$sortOpts}</select>
+    </label>
+    <button type="submit" class="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm">Aplică</button>
     <a href="/admin" class="text-sm text-slate-500 hover:text-slate-900">Reset</a>
   </div>
 </form>
 HTML;
 
-    // Rows
-    $rowsHtml = '';
-    foreach ($rows as $r) {
-        $id     = (int)$r['id'];
-        $sid    = (int)$r['submission_id'];
-        $kindR  = h($r['kind']);
-        $typeR  = h($r['type']);
-        $amtR   = h(fmt_amount((int)$r['amount']));
-        $statR  = (int)$r['status'];
-        $when   = h((string)$r['created_at']);
-        $judet  = h((string)($r['judet'] ?? '—'));
-        $varsta = $r['varsta'] !== null ? h((string)$r['varsta']) : '—';
-        $domeniu = h((string)($r['domeniu'] ?? '—'));
-        $optimist = (int)$r['optimist'] === 1 ? '😊' : '😟';
-
-        $statBadge = $statR === 1
-            ? '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-medium">aprobat</span>'
-            : '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-xs font-medium">flagged</span>';
-
-        $actionLabel = $statR === 1 ? 'Disable' : 'Approve';
-        $actionCls   = $statR === 1 ? 'bg-rose-600 hover:bg-rose-700' : 'bg-emerald-600 hover:bg-emerald-700';
-
-        $rowsHtml .= <<<HTML
-<tr class="border-b border-slate-200 hover:bg-slate-50">
-  <td class="px-3 py-2 text-xs text-slate-400">{$id}</td>
-  <td class="px-3 py-2 text-xs text-slate-500">#{$sid}</td>
-  <td class="px-3 py-2 text-xs">{$kindR}</td>
-  <td class="px-3 py-2 text-sm">{$typeR}</td>
-  <td class="px-3 py-2 text-sm font-mono text-right">{$amtR}</td>
-  <td class="px-3 py-2">{$statBadge}</td>
-  <td class="px-3 py-2 text-xs text-slate-500">{$judet} · {$varsta} ani · {$domeniu} · {$optimist}</td>
-  <td class="px-3 py-2 text-xs text-slate-400 whitespace-nowrap">{$when}</td>
-  <td class="px-3 py-2 text-right">
-    <form method="POST" action="/admin?action=toggle" class="inline">
-      <input type="hidden" name="csrf" value="{$csrf}">
-      <input type="hidden" name="id" value="{$id}">
-      <input type="hidden" name="back" value="{$backUrl}">
-      <button type="submit" class="px-3 py-1 rounded-md text-white text-xs font-medium {$actionCls}">{$actionLabel}</button>
-    </form>
-  </td>
-</tr>
-HTML;
+    // Submission cards
+    $cards = '';
+    foreach ($submissions as $s) {
+        $sid = (int)$s['id'];
+        $entries = $entriesBySubmission[$sid] ?? [];
+        $cards .= render_submission_card($s, $entries, $csrf, $backUrl);
     }
-
-    if ($rowsHtml === '') {
-        $rowsHtml = '<tr><td colspan="9" class="px-3 py-8 text-center text-slate-400">Niciun rezultat pentru filtrele alese.</td></tr>';
+    if (!$submissions) {
+        $cards = '<div class="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-400">Niciun submission pentru filtrele alese.</div>';
     }
 
     // Pagination
     $pagerHtml = '';
     if ($pages > 1) {
-        $prev = max(1, $page - 1);
-        $next = min($pages, $page + 1);
         $base = $_GET; unset($base['page']);
         $qs = http_build_query($base);
         $qs = $qs === '' ? '' : ($qs . '&');
+        $prev = max(1, $page - 1);
+        $next = min($pages, $page + 1);
         $pagerHtml = <<<HTML
-<div class="flex items-center justify-between text-sm text-slate-600 px-4 py-3">
-  <span>Pagina {$page} din {$pages}</span>
+<div class="flex items-center justify-between text-sm text-slate-600 mt-6">
+  <span>Pagina {$page} din {$pages} ({$totalSubs} submissions)</span>
   <span class="flex gap-2">
     <a href="/admin?{$qs}page={$prev}" class="px-3 py-1 rounded-md border border-slate-300 hover:bg-slate-100">← Prev</a>
     <a href="/admin?{$qs}page={$next}" class="px-3 py-1 rounded-md border border-slate-300 hover:bg-slate-100">Next →</a>
@@ -315,31 +320,108 @@ HTML;
 HTML;
     }
 
-    $main = <<<HTML
-<main class="max-w-7xl mx-auto px-4 py-6">
-  <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-    <div class="overflow-x-auto">
-      <table class="w-full text-sm">
-        <thead class="bg-slate-50 text-xs uppercase text-slate-500">
-          <tr>
-            <th class="px-3 py-2 text-left">ID</th>
-            <th class="px-3 py-2 text-left">Submit</th>
-            <th class="px-3 py-2 text-left">Kind</th>
-            <th class="px-3 py-2 text-left">Tip</th>
-            <th class="px-3 py-2 text-right">Sumă</th>
-            <th class="px-3 py-2 text-left">Status</th>
-            <th class="px-3 py-2 text-left">Demograf.</th>
-            <th class="px-3 py-2 text-left">Când</th>
-            <th class="px-3 py-2 text-right">Acțiune</th>
-          </tr>
-        </thead>
-        <tbody>{$rowsHtml}</tbody>
-      </table>
-    </div>
-    {$pagerHtml}
-  </div>
-</main>
-HTML;
+    $main = "<main class=\"max-w-7xl mx-auto px-4 py-6 space-y-4\">{$cards}{$pagerHtml}</main>";
 
-    page_shell($header . $filters . $main, 'Admin · entries');
+    page_shell($header . $filters . $main, 'Admin · cumstaicubanii.ro');
+}
+
+function render_options(array $opts, string $selected): string {
+    $html = '';
+    foreach ($opts as $val => $label) {
+        $sel = (string)$val === $selected ? ' selected' : '';
+        $html .= '<option value="' . h((string)$val) . '"' . $sel . '>' . h((string)$label) . '</option>';
+    }
+    return $html;
+}
+
+function render_submission_card(array $s, array $entries, string $csrf, string $backUrl): string {
+    $sid       = (int)$s['id'];
+    $sessionId = h((string)$s['session_id']);
+    $created   = h((string)$s['created_at']);
+    $judet     = h((string)($s['judet'] ?? '—'));
+    $varsta    = $s['varsta'] !== null ? h((string)$s['varsta']) . ' ani' : '—';
+    $sex       = h((string)($s['sex'] ?? '—'));
+    $pi        = $s['persoane_intretinere'] !== null ? 'PI:' . h((string)$s['persoane_intretinere']) : '';
+    $domeniu   = h((string)($s['domeniu'] ?? '—'));
+    $optimist  = (int)$s['optimist'] === 1 ? '😊' : '😟';
+
+    $nApproved = 0; $nTotal = count($entries);
+    foreach ($entries as $e) if ((int)$e['status'] === 1) $nApproved++;
+    $allApproved = $nApproved === $nTotal;
+    $allFlagged  = $nApproved === 0;
+
+    $ratioColor = $allFlagged ? 'bg-rose-100 text-rose-700'
+                : ($allApproved ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700');
+
+    // Entry rows
+    $entryRows = '';
+    foreach ($entries as $e) {
+        $eid    = (int)$e['id'];
+        $eKind  = h($e['kind']);
+        $eType  = h($e['type']);
+        $eAmt   = h(fmt_amount((int)$e['amount']));
+        $eStat  = (int)$e['status'];
+
+        $badge = $eStat === 1
+            ? '<span class="inline-block px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-medium">ok</span>'
+            : '<span class="inline-block px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-xs font-medium">flagged</span>';
+
+        $toggleLabel = $eStat === 1 ? 'Disable' : 'Approve';
+        $toggleCls   = $eStat === 1 ? 'bg-rose-600 hover:bg-rose-700' : 'bg-emerald-600 hover:bg-emerald-700';
+
+        $entryRows .= <<<HTML
+<tr class="border-t border-slate-100">
+  <td class="px-2 py-1.5 text-xs text-slate-400 w-12">#{$eid}</td>
+  <td class="px-2 py-1.5 text-xs w-20">{$eKind}</td>
+  <td class="px-2 py-1.5 text-sm">{$eType}</td>
+  <td class="px-2 py-1.5 text-sm font-mono text-right">{$eAmt}</td>
+  <td class="px-2 py-1.5 w-20">{$badge}</td>
+  <td class="px-2 py-1.5 text-right">
+    <form method="POST" action="/admin?action=toggle" class="inline">
+      <input type="hidden" name="csrf" value="{$csrf}">
+      <input type="hidden" name="id" value="{$eid}">
+      <input type="hidden" name="back" value="{$backUrl}">
+      <button type="submit" class="px-2.5 py-0.5 rounded-md text-white text-xs font-medium {$toggleCls}">{$toggleLabel}</button>
+    </form>
+  </td>
+</tr>
+HTML;
+    }
+
+    // Bulk action buttons (disabled when not applicable)
+    $approveDisabled = $allApproved ? 'opacity-40 cursor-not-allowed' : '';
+    $disableDisabled = $allFlagged  ? 'opacity-40 cursor-not-allowed' : '';
+
+    return <<<HTML
+<section class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+  <header class="bg-slate-50 px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-slate-200">
+    <div class="flex items-baseline gap-2 flex-1 min-w-0">
+      <span class="text-xs text-slate-400">#{$sid}</span>
+      <span class="font-mono text-sm text-slate-800">{$sessionId}</span>
+      <span class="text-xs text-slate-500 truncate">{$judet} · {$varsta} · {$sex} · {$pi} · {$domeniu} · {$optimist}</span>
+      <span class="text-xs text-slate-400 ml-auto">{$created}</span>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      <span class="text-xs px-2 py-0.5 rounded-full {$ratioColor}">{$nApproved}/{$nTotal} ok</span>
+      <form method="POST" action="/admin?action=bulk_approve" class="inline">
+        <input type="hidden" name="csrf" value="{$csrf}">
+        <input type="hidden" name="submission_id" value="{$sid}">
+        <input type="hidden" name="back" value="{$backUrl}">
+        <button type="submit" class="px-3 py-1 rounded-md text-white text-xs font-medium bg-emerald-600 hover:bg-emerald-700 {$approveDisabled}">Approve all</button>
+      </form>
+      <form method="POST" action="/admin?action=bulk_disable" class="inline">
+        <input type="hidden" name="csrf" value="{$csrf}">
+        <input type="hidden" name="submission_id" value="{$sid}">
+        <input type="hidden" name="back" value="{$backUrl}">
+        <button type="submit" class="px-3 py-1 rounded-md text-white text-xs font-medium bg-rose-600 hover:bg-rose-700 {$disableDisabled}">Disable all</button>
+      </form>
+    </div>
+  </header>
+  <table class="w-full">
+    <tbody>
+      {$entryRows}
+    </tbody>
+  </table>
+</section>
+HTML;
 }
