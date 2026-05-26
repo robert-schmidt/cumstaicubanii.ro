@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/../db.php';
-cors_headers();
+check_request_origin();
 
 json_response([
     'datorii_types' => DATORII_TYPES,

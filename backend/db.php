@@ -56,14 +56,97 @@ function json_response($data, int $status = 200): void {
     exit;
 }
 
-function cors_headers(): void {
-    header('Access-Control-Allow-Origin: *');
-    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type');
+const ALLOWED_HOSTS = ['cumstaicubanii.ro', 'www.cumstaicubanii.ro', 'localhost', '127.0.0.1'];
+
+function host_is_allowed(string $url): bool {
+    $host = parse_url($url, PHP_URL_HOST);
+    if (!$host) return false;
+    return in_array(strtolower($host), ALLOWED_HOSTS, true);
+}
+
+/**
+ * Handles CORS preflight and rejects state-changing requests from untrusted origins.
+ * GETs are public; POSTs (and other writes) must come from an allowed host (Origin or Referer).
+ */
+function check_request_origin(): void {
+    $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+
+    // OPTIONS preflight — be permissive only for known origins
     if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+        if ($origin !== '' && host_is_allowed($origin)) {
+            header('Access-Control-Allow-Origin: ' . $origin);
+            header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+            header('Access-Control-Allow-Headers: Content-Type');
+            header('Vary: Origin');
+        }
         http_response_code(204);
         exit;
     }
+
+    // Echo back allowed origin header so browser CORS checks pass for cross-origin GETs (rare).
+    if ($origin !== '' && host_is_allowed($origin)) {
+        header('Access-Control-Allow-Origin: ' . $origin);
+        header('Vary: Origin');
+    }
+
+    // Read methods (GET, HEAD) — leave open. Stats are public by design.
+    if (in_array($_SERVER['REQUEST_METHOD'], ['GET', 'HEAD'], true)) return;
+
+    // Write methods — must come from an allowed host
+    $referer = $_SERVER['HTTP_REFERER'] ?? '';
+    if ($origin !== '' && host_is_allowed($origin)) return;
+    if ($referer !== '' && host_is_allowed($referer)) return;
+
+    json_response(['error' => 'Forbidden: untrusted origin'], 403);
+}
+
+function client_ip(): string {
+    $xff = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '';
+    if ($xff !== '') {
+        foreach (explode(',', $xff) as $ip) {
+            $ip = trim($ip);
+            if (filter_var($ip, FILTER_VALIDATE_IP)) return $ip;
+        }
+    }
+    return $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+}
+
+/**
+ * Simple file-based per-key rate limit. Sliding window of $windowSecs seconds.
+ * Aborts with 429 if more than $max requests in window.
+ */
+function rate_limit(string $key, int $max, int $windowSecs): void {
+    $bucket = sys_get_temp_dir() . '/datorii-rl';
+    if (!is_dir($bucket)) @mkdir($bucket, 0700, true);
+    $file = $bucket . '/' . hash('sha1', $key);
+    $now = time();
+    $threshold = $now - $windowSecs;
+
+    $fp = @fopen($file, 'c+');
+    if (!$fp) {
+        // If we can't open the file (FS issue), fail-open — better than blocking everyone.
+        return;
+    }
+    flock($fp, LOCK_EX);
+    $raw = stream_get_contents($fp);
+    $data = $raw !== '' ? json_decode($raw, true) : null;
+    if (!is_array($data)) $data = [];
+    $data = array_values(array_filter($data, fn($t) => is_int($t) && $t > $threshold));
+
+    if (count($data) >= $max) {
+        flock($fp, LOCK_UN);
+        fclose($fp);
+        header('Retry-After: ' . $windowSecs);
+        json_response(['error' => 'Prea multe cereri. Reîncearcă mai târziu.'], 429);
+    }
+
+    $data[] = $now;
+    ftruncate($fp, 0);
+    rewind($fp);
+    fwrite($fp, json_encode($data));
+    fflush($fp);
+    flock($fp, LOCK_UN);
+    fclose($fp);
 }
 
 const DATORII_TYPES = [
