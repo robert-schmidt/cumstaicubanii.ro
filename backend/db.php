@@ -49,9 +49,15 @@ function db(): PDO {
  * Returns 1 (approved) or 0 (flagged).
  */
 const OUTLIER_MIN_SAMPLE = 5;
+// Auto-flag at insert: amount must be within [median/BAND, median*BAND] to pass.
+// 5× is permissive enough to admit legitimate high-net-worth users (e.g., real
+// 500k depozit when median is 42k = ~12×; gets flagged for admin review but
+// the user's *displayed* totals still reflect their input — see stats.php for
+// how percentile uses raw totals).
+const OUTLIER_BAND = 5.0;
 
 function compute_entry_status(PDO $pdo, string $kind, string $type, int $amount): int {
-    if ($amount <= 0) return 0; // sanity — caller should already filter, but be safe
+    if ($amount <= 0) return 0;
 
     static $medianCache = [];
     $cacheKey = $kind . '|' . $type;
@@ -78,11 +84,11 @@ function compute_entry_status(PDO $pdo, string $kind, string $type, int $amount)
     }
 
     $median = $medianCache[$cacheKey];
-    if ($median === null) return 1;          // bootstrap — not enough baseline data
-    if ($median <= 0) return 1;              // defensive (cannot happen with amount>0 invariant)
+    if ($median === null) return 1;
+    if ($median <= 0) return 1;
 
-    $lower = $median / 2.0;
-    $upper = $median * 2.0;
+    $lower = $median / OUTLIER_BAND;
+    $upper = $median * OUTLIER_BAND;
     if ($amount < $lower || $amount > $upper) return 0;
     return 1;
 }
