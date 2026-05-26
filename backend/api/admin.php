@@ -61,7 +61,7 @@ if ($action === 'logout') {
     exit;
 }
 
-if ($method === 'POST' && in_array($action, ['toggle', 'bulk_approve', 'bulk_disable'], true)) {
+if ($method === 'POST' && in_array($action, ['toggle', 'bulk_approve', 'bulk_disable', 'delete_submission'], true)) {
     if (!$isAuth) { http_response_code(403); exit; }
     if (!hash_equals($csrf, (string)($_POST['csrf'] ?? ''))) {
         http_response_code(403); exit('Bad CSRF token');
@@ -71,6 +71,11 @@ if ($method === 'POST' && in_array($action, ['toggle', 'bulk_approve', 'bulk_dis
         $id = (int)($_POST['id'] ?? 0);
         if ($id > 0) {
             $pdo->prepare('UPDATE entries SET status = 1 - status WHERE id = ?')->execute([$id]);
+        }
+    } elseif ($action === 'delete_submission') {
+        $sid = (int)($_POST['submission_id'] ?? 0);
+        if ($sid > 0) {
+            $pdo->prepare('UPDATE submissions SET deleted_at = NOW() WHERE id = ?')->execute([$sid]);
         }
     } else {
         $sid = (int)($_POST['submission_id'] ?? 0);
@@ -91,6 +96,14 @@ header('X-Robots-Tag: noindex, nofollow');
 
 if (!$isAuth) {
     render_login();
+    exit;
+}
+
+// Lazy-load fragment endpoint: returns ONLY the next batch of submission cards
+// + an optional new sentinel. No shell, no JS, no header.
+if ($action === 'fragment') {
+    header('Content-Type: text/html; charset=utf-8');
+    render_admin_cards((int)($_GET['offset'] ?? 0));
     exit;
 }
 
@@ -148,30 +161,18 @@ HTML;
     page_shell($body, 'Login · admin');
 }
 
-function render_admin(): void {
-    global $csrf;
-    $pdo = db();
-
-    // -------- Filters & sort --------
+// Parse + validate filter / sort params common to render_admin and render_admin_cards.
+function admin_query_params(): array {
     $kind   = (string)($_GET['kind']   ?? '');
     $type   = (string)($_GET['type']   ?? '');
     $status = $_GET['status'] ?? '';
     $sort   = (string)($_GET['sort']   ?? 'recent');
-    $page   = max(1, (int)($_GET['page'] ?? 1));
-    $perPage = 30;
 
-    $allowedKinds  = ['datorie', 'asset'];
-    $allowedStatus = ['0', '1'];
-    $allowedSorts  = ['recent', 'amount_desc', 'amount_asc'];
-    if ($kind   !== '' && !in_array($kind, $allowedKinds, true))           $kind = '';
-    if ($status !== '' && !in_array((string)$status, $allowedStatus, true)) $status = '';
-    if (!in_array($sort, $allowedSorts, true))                              $sort = 'recent';
+    if ($kind   !== '' && !in_array($kind, ['datorie', 'asset'], true)) $kind = '';
+    if ($status !== '' && !in_array((string)$status, ['0', '1'], true)) $status = '';
+    if (!in_array($sort, ['recent', 'amount_desc', 'amount_asc'], true)) $sort = 'recent';
 
-    // Filter clauses live in EXISTS subqueries so a submission shows if it has
-    // at least one matching entry. (All its entries are then rendered, with
-    // matching/flagged ones highlighted in context.)
-    $where = [];
-    $params = [];
+    $where = ['s.deleted_at IS NULL']; $params = [];
     if ($kind !== '') {
         $where[] = 'EXISTS (SELECT 1 FROM entries e WHERE e.submission_id = s.id AND e.kind = ?)';
         $params[] = $kind;
@@ -184,37 +185,36 @@ function render_admin(): void {
         $where[] = 'EXISTS (SELECT 1 FROM entries e WHERE e.submission_id = s.id AND e.status = ?)';
         $params[] = (int)$status;
     }
-    $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
-    // Order clause varies by sort mode.
-    if ($sort === 'amount_desc') {
-        $orderSql = 'ORDER BY (SELECT MAX(amount) FROM entries e WHERE e.submission_id = s.id) DESC, s.id DESC';
-    } elseif ($sort === 'amount_asc') {
-        $orderSql = 'ORDER BY (SELECT MAX(amount) FROM entries e WHERE e.submission_id = s.id) ASC, s.id DESC';
-    } else {
-        $orderSql = 'ORDER BY s.id DESC';
-    }
+    if ($sort === 'amount_desc')      $order = 'ORDER BY (SELECT MAX(amount) FROM entries e WHERE e.submission_id = s.id) DESC, s.id DESC';
+    elseif ($sort === 'amount_asc')   $order = 'ORDER BY (SELECT MAX(amount) FROM entries e WHERE e.submission_id = s.id) ASC, s.id DESC';
+    else                              $order = 'ORDER BY s.id DESC';
 
-    // Total submissions matching filters
-    $cnt = $pdo->prepare("SELECT COUNT(*) FROM submissions s $whereSql");
-    $cnt->execute($params);
-    $totalSubs = (int)$cnt->fetchColumn();
-    $pages = max(1, (int)ceil($totalSubs / $perPage));
-    $page  = min($page, $pages);
-    $offset = ($page - 1) * $perPage;
+    return [
+        'kind'      => $kind,
+        'type'      => $type,
+        'status'    => $status,
+        'sort'      => $sort,
+        'whereSql'  => 'WHERE ' . implode(' AND ', $where),
+        'params'    => $params,
+        'orderSql'  => $order,
+    ];
+}
 
-    // Fetch the page of submissions.
-    $subSql = "SELECT s.id, s.uuid, s.session_id, s.created_at, s.judet, s.varsta,
-                      s.sex, s.persoane_intretinere, s.domeniu, s.optimist
-               FROM submissions s
-               $whereSql
-               $orderSql
-               LIMIT $perPage OFFSET $offset";
-    $sStmt = $pdo->prepare($subSql);
-    $sStmt->execute($params);
+// Fetch one batch of submissions + their entries, returning everything needed
+// to render a slice. Reused by both initial render and lazy-load fragments.
+function admin_fetch_batch(PDO $pdo, array $q, int $offset, int $limit): array {
+    $sStmt = $pdo->prepare(
+        "SELECT s.id, s.uuid, s.session_id, s.created_at, s.judet, s.varsta,
+                s.sex, s.persoane_intretinere, s.domeniu, s.optimist
+         FROM submissions s
+         {$q['whereSql']}
+         {$q['orderSql']}
+         LIMIT $limit OFFSET $offset"
+    );
+    $sStmt->execute($q['params']);
     $submissions = $sStmt->fetchAll();
 
-    // Fetch all entries for the visible submissions in one query.
     $entriesBySubmission = [];
     if ($submissions) {
         $subIds = array_column($submissions, 'id');
@@ -226,25 +226,72 @@ function render_admin(): void {
              ORDER BY status ASC, amount DESC"
         );
         $eStmt->execute($subIds);
-        foreach ($eStmt as $row) {
-            $entriesBySubmission[$row['submission_id']][] = $row;
-        }
+        foreach ($eStmt as $row) $entriesBySubmission[$row['submission_id']][] = $row;
     }
 
-    // -------- Aggregate stats for header --------
-    $summary = $pdo->query("SELECT status, COUNT(*) c FROM entries GROUP BY status")->fetchAll();
-    $approved = 0; $flagged = 0;
-    foreach ($summary as $r) {
-        if ((int)$r['status'] === 1) $approved = (int)$r['c'];
-        else $flagged = (int)$r['c'];
+    return [$submissions, $entriesBySubmission];
+}
+
+function admin_back_url(array $q): string {
+    return '/admin?' . http_build_query(array_filter([
+        'kind' => $q['kind'], 'type' => $q['type'], 'status' => $q['status'], 'sort' => $q['sort'],
+    ], fn($v) => $v !== '' && $v !== null));
+}
+
+function render_admin_cards(int $offset): void {
+    global $csrf;
+    $pdo = db();
+    $perPage = 30;
+    $q = admin_query_params();
+
+    [$submissions, $entriesBySubmission] = admin_fetch_batch($pdo, $q, $offset, $perPage);
+    $backUrl = admin_back_url($q);
+
+    $html = '';
+    foreach ($submissions as $s) {
+        $sid = (int)$s['id'];
+        $html .= render_submission_card($s, $entriesBySubmission[$sid] ?? [], $csrf, $backUrl);
     }
+
+    // If this batch was full, append a new sentinel for the NEXT batch.
+    // Frontend JS observes the sentinel and fetches more when scrolled into view.
+    if (count($submissions) === $perPage) {
+        $nextOffset = $offset + $perPage;
+        $html .= "<div id=\"lazy-sentinel\" data-offset=\"{$nextOffset}\" class=\"h-1\"></div>";
+    }
+    echo $html;
+}
+
+function render_admin(): void {
+    global $csrf;
+    $pdo = db();
+    $perPage = 30;
+    $q = admin_query_params();
+
+    [$submissions, $entriesBySubmission] = admin_fetch_batch($pdo, $q, 0, $perPage);
+    $backUrl = admin_back_url($q);
+
+    // Header totals (over the full non-deleted set, ignoring filters — so the
+    // admin sees the global moderation health).
+    $totalsRow = $pdo->query("
+        SELECT
+          SUM(CASE WHEN e.status = 1 THEN 1 ELSE 0 END) AS approved,
+          SUM(CASE WHEN e.status = 0 THEN 1 ELSE 0 END) AS flagged
+        FROM entries e
+        JOIN submissions s ON s.id = e.submission_id
+        WHERE s.deleted_at IS NULL
+    ")->fetch();
+    $approved = (int)($totalsRow['approved'] ?? 0);
+    $flagged  = (int)($totalsRow['flagged']  ?? 0);
+    $totalSubs = (int)$pdo->prepare("SELECT COUNT(*) FROM submissions s {$q['whereSql']}")
+        ->fetchColumn(); // placeholder, replaced below using prepared statement
+    $cnt = $pdo->prepare("SELECT COUNT(*) FROM submissions s {$q['whereSql']}");
+    $cnt->execute($q['params']);
+    $totalSubs = (int)$cnt->fetchColumn();
 
     $typesAll = array_merge(DATORII_TYPES, ASSET_TYPES);
-    $backUrl = '/admin?' . http_build_query(array_filter([
-        'kind' => $kind, 'type' => $type, 'status' => $status, 'sort' => $sort, 'page' => $page,
-    ], fn($v) => $v !== '' && $v !== null));
 
-    // -------- Render --------
+    // ---- Header ----
     $header = <<<HTML
 <header class="bg-white border-b border-slate-200 sticky top-0 z-10">
   <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
@@ -259,15 +306,15 @@ function render_admin(): void {
 </header>
 HTML;
 
-    // Filter dropdown options
-    $kindOpts   = render_options(['' => 'Toate'] + ['datorie' => 'datorie', 'asset' => 'asset'], $kind);
-    $typeOpts   = render_options(['' => 'Toate tipurile'] + array_combine($typesAll, $typesAll), $type);
-    $statusOpts = render_options(['' => 'Toate', '1' => 'aprobate', '0' => 'flagged'], (string)$status);
+    // ---- Filters ----
+    $kindOpts   = render_options(['' => 'Toate'] + ['datorie' => 'datorie', 'asset' => 'asset'], $q['kind']);
+    $typeOpts   = render_options(['' => 'Toate tipurile'] + array_combine($typesAll, $typesAll), $q['type']);
+    $statusOpts = render_options(['' => 'Toate', '1' => 'aprobate', '0' => 'flagged'], (string)$q['status']);
     $sortOpts   = render_options([
         'recent'      => 'Cele mai recente',
         'amount_desc' => 'Suma (mare → mică)',
         'amount_asc'  => 'Suma (mică → mare)',
-    ], $sort);
+    ], $q['sort']);
 
     $filters = <<<HTML
 <form method="GET" action="/admin" class="bg-white border-b border-slate-200">
@@ -290,37 +337,56 @@ HTML;
 </form>
 HTML;
 
-    // Submission cards
+    // ---- Initial cards + sentinel ----
     $cards = '';
     foreach ($submissions as $s) {
         $sid = (int)$s['id'];
-        $entries = $entriesBySubmission[$sid] ?? [];
-        $cards .= render_submission_card($s, $entries, $csrf, $backUrl);
+        $cards .= render_submission_card($s, $entriesBySubmission[$sid] ?? [], $csrf, $backUrl);
     }
     if (!$submissions) {
         $cards = '<div class="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-400">Niciun submission pentru filtrele alese.</div>';
     }
-
-    // Pagination
-    $pagerHtml = '';
-    if ($pages > 1) {
-        $base = $_GET; unset($base['page']);
-        $qs = http_build_query($base);
-        $qs = $qs === '' ? '' : ($qs . '&');
-        $prev = max(1, $page - 1);
-        $next = min($pages, $page + 1);
-        $pagerHtml = <<<HTML
-<div class="flex items-center justify-between text-sm text-slate-600 mt-6">
-  <span>Pagina {$page} din {$pages} ({$totalSubs} submissions)</span>
-  <span class="flex gap-2">
-    <a href="/admin?{$qs}page={$prev}" class="px-3 py-1 rounded-md border border-slate-300 hover:bg-slate-100">← Prev</a>
-    <a href="/admin?{$qs}page={$next}" class="px-3 py-1 rounded-md border border-slate-300 hover:bg-slate-100">Next →</a>
-  </span>
-</div>
-HTML;
+    $sentinel = '';
+    if (count($submissions) === $perPage) {
+        $nextOffset = $perPage;
+        $sentinel = "<div id=\"lazy-sentinel\" data-offset=\"{$nextOffset}\" class=\"h-1\"></div>";
     }
 
-    $main = "<main class=\"max-w-7xl mx-auto px-4 py-6 space-y-4\">{$cards}{$pagerHtml}</main>";
+    // ---- Lazy-load JS ----
+    $lazyJs = <<<'JS'
+<script>
+(function () {
+  function observeSentinel() {
+    var sentinel = document.getElementById('lazy-sentinel');
+    if (!sentinel) return;
+    var io = new IntersectionObserver(function (entries) {
+      if (!entries[0].isIntersecting) return;
+      io.disconnect();
+      var offset = sentinel.dataset.offset;
+      var params = new URLSearchParams(window.location.search);
+      params.set('action', 'fragment');
+      params.set('offset', offset);
+      fetch('/admin?' + params.toString(), { credentials: 'same-origin' })
+        .then(function (r) { return r.text(); })
+        .then(function (html) {
+          var tmp = document.createElement('div');
+          tmp.innerHTML = html;
+          var list = document.getElementById('lazy-list');
+          // Drop the old sentinel from the page; new one (if any) is already in tmp
+          sentinel.remove();
+          while (tmp.firstChild) list.appendChild(tmp.firstChild);
+          observeSentinel();
+        })
+        .catch(function (e) { console.error('lazy load failed', e); });
+    }, { rootMargin: '400px' });
+    io.observe(sentinel);
+  }
+  observeSentinel();
+})();
+</script>
+JS;
+
+    $main = "<main class=\"max-w-7xl mx-auto px-4 py-6\"><div id=\"lazy-list\" class=\"space-y-4\">{$cards}{$sentinel}</div></main>{$lazyJs}";
 
     page_shell($header . $filters . $main, 'Admin · cumstaicubanii.ro');
 }
@@ -393,7 +459,7 @@ HTML;
     $disableDisabled = $allFlagged  ? 'opacity-40 cursor-not-allowed' : '';
 
     return <<<HTML
-<section class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+<section class="bg-white rounded-2xl border border-slate-200 overflow-hidden" data-submission="{$sid}">
   <header class="bg-slate-50 px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-slate-200">
     <div class="flex items-baseline gap-2 flex-1 min-w-0">
       <span class="text-xs text-slate-400">#{$sid}</span>
@@ -414,6 +480,13 @@ HTML;
         <input type="hidden" name="submission_id" value="{$sid}">
         <input type="hidden" name="back" value="{$backUrl}">
         <button type="submit" class="px-3 py-1 rounded-md text-white text-xs font-medium bg-rose-600 hover:bg-rose-700 {$disableDisabled}">Disable all</button>
+      </form>
+      <form method="POST" action="/admin?action=delete_submission" class="inline"
+            onsubmit="return confirm('Sigur dispari rândul #{$sid} complet? Datele rămân în DB (soft-delete) dar nu mai apar în admin sau în statistici.');">
+        <input type="hidden" name="csrf" value="{$csrf}">
+        <input type="hidden" name="submission_id" value="{$sid}">
+        <input type="hidden" name="back" value="{$backUrl}">
+        <button type="submit" class="px-3 py-1 rounded-md text-xs font-medium text-slate-600 border border-slate-300 hover:bg-slate-900 hover:text-white" title="Soft-delete: rândul dispare complet din admin și statistici">🗑️</button>
       </form>
     </div>
   </header>
