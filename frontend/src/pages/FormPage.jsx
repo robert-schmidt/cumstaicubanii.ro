@@ -3,13 +3,44 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { fetchMeta, fetchStats, submitForm } from '../lib/api.js';
 import { markSubmitted, setSid, isValidSid, hasSubmitted, getSid } from '../lib/identity.js';
-import { formatInput, parseNumber, stripAmountChars, stripDigits } from '../lib/format.js';
+import { formatInput, parseNumber, stripAmountChars, stripDigits, formatNumber } from '../lib/format.js';
 
 const VARSTA_MIN = 14, VARSTA_MAX = 110;
 const PI_MIN = 0, PI_MAX = 20;
 
 let nextId = 1;
 const tmpId = () => `e${nextId++}`;
+
+// The exact shape that the "✨ Date exemplu" button writes into the form.
+// Kept here so we can detect a submission that matches it byte-for-byte and
+// flag it server-side as untouched-sample (status=0).
+const SAMPLE_DEMO = {
+  judet: 'Cluj',
+  varsta: '34',
+  sex: 'M',
+  persoane_intretinere: '1',
+  domeniu: 'IT & Software',
+  domeniuOther: '',
+};
+const SAMPLE_DATORII = [
+  { type: 'credit imobiliar', amount: 285000 },
+  { type: 'credit personal',  amount: 18500 },
+  { type: 'card credit',      amount: 4200 },
+];
+const SAMPLE_ASSET = [
+  { type: 'depozite bancare', amount: 42000 },
+  { type: 'imobile',          amount: 410000 },
+  { type: 'cryptomonede',     amount: 8500 },
+  { type: 'titluri de stat',  amount: 15000 },
+];
+
+function entriesMatchSample(actualEntries, sample) {
+  if (actualEntries.length !== sample.length) return false;
+  const keyOf = (e) => `${e.type}|${e.amount}`;
+  const a = actualEntries.map(keyOf).sort();
+  const b = sample.map(keyOf).sort();
+  return a.every((v, i) => v === b[i]);
+}
 
 export default function FormPage({ uuid }) {
   const nav = useNavigate();
@@ -49,27 +80,12 @@ export default function FormPage({ uuid }) {
   }
 
   function fillSample() {
-    setDatorii([
-      { id: tmpId(), type: 'credit imobiliar', amount: '285.000' },
-      { id: tmpId(), type: 'credit personal', amount: '18.500' },
-      { id: tmpId(), type: 'card credit', amount: '4.200' },
-    ]);
-    setAsset([
-      { id: tmpId(), type: 'depozite bancare', amount: '42.000' },
-      { id: tmpId(), type: 'imobile', amount: '410.000' },
-      { id: tmpId(), type: 'cryptomonede', amount: '8.500' },
-      { id: tmpId(), type: 'titluri de stat', amount: '15.000' },
-    ]);
+    const fmt = (n) => new Intl.NumberFormat('ro-RO').format(n);
+    setDatorii(SAMPLE_DATORII.map(e => ({ id: tmpId(), type: e.type, amount: fmt(e.amount) })));
+    setAsset(SAMPLE_ASSET.map(e => ({ id: tmpId(), type: e.type, amount: fmt(e.amount) })));
     setOptimist(true);
     setShowDemo(true);
-    setDemo({
-      judet: 'Cluj',
-      varsta: '34',
-      sex: 'M',
-      persoane_intretinere: '1',
-      domeniu: 'IT & Software',
-      domeniuOther: '',
-    });
+    setDemo({ ...SAMPLE_DEMO });
     setError(null);
   }
 
@@ -128,6 +144,21 @@ export default function FormPage({ uuid }) {
       ? demo.domeniuOther.trim()
       : (demo.domeniu || null);
 
+    // Detect "✨ Date exemplu was clicked and nothing was touched after". If true,
+    // the backend stores entries with status=0 so this stale sample doesn't
+    // pollute the aggregates. We compare the canonical normalized values.
+    const submittedDatorii = entries.filter(e => e.kind === 'datorie').map(({type, amount}) => ({type, amount}));
+    const submittedAsset   = entries.filter(e => e.kind === 'asset')  .map(({type, amount}) => ({type, amount}));
+    const isUntouchedSample =
+      optimist === true &&
+      demo.judet === SAMPLE_DEMO.judet &&
+      demo.varsta === SAMPLE_DEMO.varsta &&
+      demo.sex === SAMPLE_DEMO.sex &&
+      demo.persoane_intretinere === SAMPLE_DEMO.persoane_intretinere &&
+      demo.domeniu === SAMPLE_DEMO.domeniu &&
+      entriesMatchSample(submittedDatorii, SAMPLE_DATORII) &&
+      entriesMatchSample(submittedAsset, SAMPLE_ASSET);
+
     const payload = {
       uuid,
       optimist,
@@ -137,6 +168,7 @@ export default function FormPage({ uuid }) {
       persoane_intretinere: demo.persoane_intretinere !== '' ? Number(demo.persoane_intretinere) : null,
       domeniu,
       entries,
+      is_sample: isUntouchedSample,
     };
 
     setSubmitting(true);
@@ -298,11 +330,16 @@ export default function FormPage({ uuid }) {
 
         {error && <div className="rounded-lg bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 text-sm">{error}</div>}
 
-        <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-end">
+        <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+          {meta.approved_submissions_count > 0 && (
+            <span className="text-sm text-slate-500">
+              📊 <strong className="text-slate-700">{formatNumber(meta.approved_submissions_count)}</strong> intrări aprobate până acum
+            </span>
+          )}
           <button
             type="submit"
             disabled={submitting}
-            className="inline-flex items-center justify-center px-6 py-3 rounded-xl bg-emerald-600 text-white font-medium shadow-sm hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-60 transition"
+            className="sm:ml-auto inline-flex items-center justify-center px-6 py-3 rounded-xl bg-emerald-600 text-white font-medium shadow-sm hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-60 transition"
           >
             {submitting ? 'Se trimite…' : 'Trimite și vezi statisticile'}
           </button>

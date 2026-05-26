@@ -27,6 +27,7 @@ if (!preg_match('/^[0-9a-f-]{16,64}$/i', $uuid)) {
 }
 
 $optimist = !empty($body['optimist']) ? 1 : 0;
+$isSample = !empty($body['is_sample']);
 
 $judet = $body['judet'] ?? null;
 if ($judet !== null) {
@@ -99,7 +100,9 @@ try {
 
     $ins = $pdo->prepare('INSERT INTO entries(submission_id, kind, type, amount, status) VALUES (?, ?, ?, ?, ?)');
     foreach ($cleaned as $e) {
-        $status = compute_entry_status($pdo, $e['kind'], $e['type'], (int)$e['amount']);
+        // Untouched "Date exemplu" submission → all entries forced to status=0.
+        // Otherwise the normal outlier-band rule decides.
+        $status = $isSample ? 0 : compute_entry_status($pdo, $e['kind'], $e['type'], (int)$e['amount']);
         $ins->execute([$rowId, $e['kind'], $e['type'], $e['amount'], $status]);
     }
     $pdo->commit();
