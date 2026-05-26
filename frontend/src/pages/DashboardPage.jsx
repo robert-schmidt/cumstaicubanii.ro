@@ -421,12 +421,16 @@ function ShareCard({ user }) {
   // Web Share API exists on Chrome desktop too, but UX-wise we only want it on mobile/tablet
   // (touch viewport). On desktop, prefer explicit platform buttons.
   const canNativeShare = isTouchViewport && typeof navigator !== 'undefined' && typeof navigator.share === 'function';
-  // Clamp to ≥ 1: a percentile of 100 would render as "top 0%" which is
-  // nonsense ("top of the top"). With small filtered populations, hitting 100
-  // is easy. The smallest meaningful "top" is 1%.
-  const tD = Math.max(1, Math.round(100 - user.percentile_datorii));
-  const tA = Math.max(1, Math.round(100 - user.percentile_asset));
-  const tN = Math.max(1, Math.round(100 - user.percentile_net_worth));
+  // Share message reflects the user's ABSOLUTE position vs the whole population —
+  // it ignores any dashboard filter (county/sex/age) the user happens to have
+  // toggled. Clamp to ≥ 1: a percentile of 100 would render as "top 0%" which
+  // is nonsense.
+  const pctD = user.percentile_datorii_global   ?? user.percentile_datorii;
+  const pctA = user.percentile_asset_global     ?? user.percentile_asset;
+  const pctN = user.percentile_net_worth_global ?? user.percentile_net_worth;
+  const tD = Math.max(1, Math.round(100 - pctD));
+  const tA = Math.max(1, Math.round(100 - pctA));
+  const tN = Math.max(1, Math.round(100 - pctN));
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   // Personalized share URL — backend renders OG meta tags from these params so
   // FB / LinkedIn previews actually show the user's stats.
