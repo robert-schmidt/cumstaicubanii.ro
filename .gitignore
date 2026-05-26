@@ -6,3 +6,4 @@ backend/config.local.php
 *.log
 .env
 .env.local
+DEPLOY.md
