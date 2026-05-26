@@ -256,13 +256,18 @@ function PercentileCard({ label, pct, betterHigh }) {
     ? (pct >= 50 ? `Top ${topR}%` : `Sub medie`)
     : (pct <= 50 ? `Sub medie 🎉` : `Top ${topR}% (datorii mari)`);
 
-  // Plain-Romanian comparator under the bar — no statistics jargon.
-  // pct = % din populație care au valori mai mici decât tine.
+  // Plain-Romanian comparator under the bar. Population differs by metric:
+  // - Net worth: all users (positive or negative net worth is valid for any).
+  // - Asset / Datorii: only users who reported that kind, since the median
+  //   excluded zero-metric users (otherwise rank would mix in people who
+  //   simply didn't report anything for that metric).
   let compare;
-  if (betterHigh) {
+  if (label === 'Net worth') {
     compare = `mai mult decât ${pctR}% dintre cei care au răspuns`;
+  } else if (label === 'Asset-uri') {
+    compare = `mai mult decât ${pctR}% dintre cei cu asset-uri`;
   } else {
-    compare = `mai mult decât ${pctR}% dintre cei care au răspuns (datorii)`;
+    compare = `mai mult decât ${pctR}% dintre cei cu datorii`;
   }
 
   return (
