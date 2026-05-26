@@ -1,0 +1,44 @@
+name: Deploy to production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: SSH → deploy-cscb.sh
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Trigger remote deploy
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY:  ${{ secrets.SSH_KEY }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          # Pin the host key so MITM can't intercept silently
+          ssh-keyscan -p "$SSH_PORT" -t ed25519 "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          echo "::group::Remote deploy output"
+          # `true` is irrelevant — server's ForceCommand executes deploy-cscb.sh
+          ssh -i ~/.ssh/deploy_key \
+              -p "$SSH_PORT" \
+              -o BatchMode=yes \
+              -o ConnectTimeout=15 \
+              -o ServerAliveInterval=20 \
+              "${SSH_USER}@${SSH_HOST}" true
+          echo "::endgroup::"

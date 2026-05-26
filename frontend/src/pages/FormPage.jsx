@@ -226,13 +226,14 @@ export default function FormPage({ uuid }) {
           <button
             type="button"
             onClick={() => setShowDemo(s => !s)}
-            className="w-full flex items-start justify-between px-5 sm:px-6 py-4 text-left gap-3"
+            aria-expanded={showDemo}
+            className="w-full flex items-start justify-between px-5 sm:px-6 py-4 text-left gap-3 cursor-pointer select-none hover:bg-slate-50/60 rounded-2xl transition"
           >
             <span>
               <span className="block font-semibold text-slate-900">Date demografice</span>
               <span className="block text-xs text-slate-500 font-normal mt-0.5">Opțional, dar ajută la acuratețea statisticilor.</span>
             </span>
-            <span className={'text-slate-400 transition-transform mt-0.5 ' + (showDemo ? 'rotate-180' : '')}>▾</span>
+            <Chevron open={showDemo} className="mt-0.5 shrink-0" />
           </button>
           <AnimatePresence initial={false}>
             {showDemo && (
@@ -312,6 +313,18 @@ export default function FormPage({ uuid }) {
   );
 }
 
+function Chevron({ open, className = '' }) {
+  return (
+    <svg
+      width="20" height="20" viewBox="0 0 20 20" fill="none"
+      aria-hidden="true"
+      className={'text-slate-400 chev-rotate ' + (open ? 'rotate-180 ' : '') + className}
+    >
+      <path d="M5 8l5 5 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function SidLogin() {
   const nav = useNavigate();
   const [value, setValue] = useState('');
@@ -344,13 +357,13 @@ function SidLogin() {
   }
 
   return (
-    <details className="mb-6 rounded-xl border border-slate-200 bg-white">
-      <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between text-sm">
-        <span className="text-slate-700">
+    <details className="mb-6 rounded-xl border border-slate-200 bg-white group/details">
+      <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between gap-3 text-sm select-none">
+        <span className="text-slate-700 min-w-0 flex-1">
           <span className="font-medium">Ai un cod de sesiune?</span>
-          <span className="text-slate-500"> Continuă de unde ai rămas →</span>
+          <span className="text-slate-500 hidden sm:inline"> · Continuă de unde ai rămas</span>
         </span>
-        <span className="text-slate-400">▾</span>
+        <Chevron open={false} className="group-open/details:rotate-180" />
       </summary>
       <form onSubmit={login} className="px-4 pb-4 pt-1 flex flex-col sm:flex-row gap-2 items-start sm:items-center">
         <input
