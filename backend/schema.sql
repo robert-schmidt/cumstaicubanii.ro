@@ -12,9 +12,13 @@ CREATE TABLE IF NOT EXISTS submissions (
     sex CHAR(1) DEFAULT NULL,
     persoane_intretinere INT DEFAULT NULL,
     domeniu VARCHAR(80) DEFAULT NULL,
+    deleted_at DATETIME DEFAULT NULL,
+    is_spam TINYINT(1) NOT NULL DEFAULT 0,
     UNIQUE KEY uq_submissions_sid (session_id),
     KEY idx_submissions_uuid (uuid),
-    KEY idx_submissions_judet (judet)
+    KEY idx_submissions_judet (judet),
+    KEY idx_submissions_deleted_at (deleted_at),
+    KEY idx_submissions_is_spam (is_spam)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS entries (

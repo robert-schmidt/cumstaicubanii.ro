@@ -61,7 +61,7 @@ if ($action === 'logout') {
     exit;
 }
 
-if ($method === 'POST' && in_array($action, ['toggle', 'bulk_approve', 'bulk_disable', 'delete_submission'], true)) {
+if ($method === 'POST' && in_array($action, ['toggle', 'bulk_approve', 'bulk_disable', 'delete_submission', 'toggle_spam'], true)) {
     if (!$isAuth) { http_response_code(403); exit; }
     if (!hash_equals($csrf, (string)($_POST['csrf'] ?? ''))) {
         http_response_code(403); exit('Bad CSRF token');
@@ -76,6 +76,11 @@ if ($method === 'POST' && in_array($action, ['toggle', 'bulk_approve', 'bulk_dis
         $sid = (int)($_POST['submission_id'] ?? 0);
         if ($sid > 0) {
             $pdo->prepare('UPDATE submissions SET deleted_at = NOW() WHERE id = ?')->execute([$sid]);
+        }
+    } elseif ($action === 'toggle_spam') {
+        $sid = (int)($_POST['submission_id'] ?? 0);
+        if ($sid > 0) {
+            $pdo->prepare('UPDATE submissions SET is_spam = 1 - is_spam WHERE id = ?')->execute([$sid]);
         }
     } else {
         $sid = (int)($_POST['submission_id'] ?? 0);
@@ -166,12 +171,16 @@ function admin_query_params(): array {
     $kind   = (string)($_GET['kind']   ?? '');
     $type   = (string)($_GET['type']   ?? '');
     $status = $_GET['status'] ?? '';
+    $spam   = $_GET['spam'] ?? '';
     $sort   = (string)($_GET['sort']   ?? 'recent');
 
     if ($kind   !== '' && !in_array($kind, ['datorie', 'asset'], true)) $kind = '';
     if ($status !== '' && !in_array((string)$status, ['0', '1'], true)) $status = '';
+    if ($spam   !== '' && !in_array((string)$spam,   ['0', '1'], true)) $spam = '';
     if (!in_array($sort, ['recent', 'amount_desc', 'amount_asc'], true)) $sort = 'recent';
 
+    // Admin sees non-deleted by default. Spam filter is opt-in (default shows
+    // both spam and non-spam, so admin can spot patterns).
     $where = ['s.deleted_at IS NULL']; $params = [];
     if ($kind !== '') {
         $where[] = 'EXISTS (SELECT 1 FROM entries e WHERE e.submission_id = s.id AND e.kind = ?)';
@@ -185,6 +194,10 @@ function admin_query_params(): array {
         $where[] = 'EXISTS (SELECT 1 FROM entries e WHERE e.submission_id = s.id AND e.status = ?)';
         $params[] = (int)$status;
     }
+    if ($spam !== '') {
+        $where[] = 's.is_spam = ?';
+        $params[] = (int)$spam;
+    }
 
     if ($sort === 'amount_desc')      $order = 'ORDER BY (SELECT MAX(amount) FROM entries e WHERE e.submission_id = s.id) DESC, s.id DESC';
     elseif ($sort === 'amount_asc')   $order = 'ORDER BY (SELECT MAX(amount) FROM entries e WHERE e.submission_id = s.id) ASC, s.id DESC';
@@ -194,6 +207,7 @@ function admin_query_params(): array {
         'kind'      => $kind,
         'type'      => $type,
         'status'    => $status,
+        'spam'      => $spam,
         'sort'      => $sort,
         'whereSql'  => 'WHERE ' . implode(' AND ', $where),
         'params'    => $params,
@@ -206,7 +220,7 @@ function admin_query_params(): array {
 function admin_fetch_batch(PDO $pdo, array $q, int $offset, int $limit): array {
     $sStmt = $pdo->prepare(
         "SELECT s.id, s.uuid, s.session_id, s.created_at, s.judet, s.varsta,
-                s.sex, s.persoane_intretinere, s.domeniu, s.optimist
+                s.sex, s.persoane_intretinere, s.domeniu, s.optimist, s.is_spam
          FROM submissions s
          {$q['whereSql']}
          {$q['orderSql']}
@@ -234,7 +248,8 @@ function admin_fetch_batch(PDO $pdo, array $q, int $offset, int $limit): array {
 
 function admin_back_url(array $q): string {
     return '/admin?' . http_build_query(array_filter([
-        'kind' => $q['kind'], 'type' => $q['type'], 'status' => $q['status'], 'sort' => $q['sort'],
+        'kind' => $q['kind'], 'type' => $q['type'], 'status' => $q['status'],
+        'spam' => $q['spam'], 'sort' => $q['sort'],
     ], fn($v) => $v !== '' && $v !== null));
 }
 
@@ -310,6 +325,7 @@ HTML;
     $kindOpts   = render_options(['' => 'Toate'] + ['datorie' => 'datorie', 'asset' => 'asset'], $q['kind']);
     $typeOpts   = render_options(['' => 'Toate tipurile'] + array_combine($typesAll, $typesAll), $q['type']);
     $statusOpts = render_options(['' => 'Toate', '1' => 'aprobate', '0' => 'flagged'], (string)$q['status']);
+    $spamOpts   = render_options(['' => 'Toate', '0' => 'non-spam', '1' => '🚫 doar spam'], (string)$q['spam']);
     $sortOpts   = render_options([
         'recent'      => 'Cele mai recente',
         'amount_desc' => 'Suma (mare → mică)',
@@ -327,6 +343,9 @@ HTML;
     </label>
     <label class="text-xs text-slate-600">Status
       <select name="status" class="block mt-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm">{$statusOpts}</select>
+    </label>
+    <label class="text-xs text-slate-600">Spam
+      <select name="spam" class="block mt-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm">{$spamOpts}</select>
     </label>
     <label class="text-xs text-slate-600">Sortare
       <select name="sort" class="block mt-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm">{$sortOpts}</select>
@@ -425,6 +444,7 @@ function render_submission_card(array $s, array $entries, string $csrf, string $
     $pi        = $s['persoane_intretinere'] !== null ? 'PI:' . h((string)$s['persoane_intretinere']) : '';
     $domeniu   = h((string)($s['domeniu'] ?? '—'));
     $optimist  = (int)$s['optimist'] === 1 ? '😊' : '😟';
+    $isSpam    = (int)($s['is_spam'] ?? 0) === 1;
 
     $nApproved = 0; $nTotal = count($entries);
     foreach ($entries as $e) if ((int)$e['status'] === 1) $nApproved++;
@@ -473,12 +493,22 @@ HTML;
     $approveDisabled = $allApproved ? 'opacity-40 cursor-not-allowed' : '';
     $disableDisabled = $allFlagged  ? 'opacity-40 cursor-not-allowed' : '';
 
+    $spamBadge = $isSpam
+        ? '<span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 font-semibold">🚫 SPAM</span>'
+        : '';
+    $spamBtnLabel = $isSpam ? '✓ unmark spam' : '🚫 spam';
+    $spamBtnCls   = $isSpam
+        ? 'text-rose-700 border border-rose-300 bg-rose-50 hover:bg-rose-100'
+        : 'text-slate-600 border border-slate-300 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-300';
+    $sectionCls = 'bg-white rounded-2xl border overflow-hidden ' . ($isSpam ? 'border-rose-200 ring-1 ring-rose-100' : 'border-slate-200');
+
     return <<<HTML
-<section class="bg-white rounded-2xl border border-slate-200 overflow-hidden" data-submission="{$sid}">
+<section class="{$sectionCls}" data-submission="{$sid}">
   <header class="bg-slate-50 px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-slate-200">
     <div class="flex items-baseline gap-2 flex-1 min-w-0">
       <span class="text-xs text-slate-400">#{$sid}</span>
       <span class="font-mono text-sm text-slate-800">{$sessionId}</span>
+      {$spamBadge}
       <span class="text-xs text-slate-500 truncate">{$judet} · {$varsta} · {$sex} · {$pi} · {$domeniu} · {$optimist}</span>
       <span class="text-xs text-slate-400 ml-auto">{$created}</span>
     </div>
@@ -495,6 +525,12 @@ HTML;
         <input type="hidden" name="submission_id" value="{$sid}">
         <input type="hidden" name="back" value="{$backUrl}">
         <button type="submit" class="px-3 py-1 rounded-md text-white text-xs font-medium bg-rose-600 hover:bg-rose-700 {$disableDisabled}">Disable all</button>
+      </form>
+      <form method="POST" action="/admin?action=toggle_spam" class="inline">
+        <input type="hidden" name="csrf" value="{$csrf}">
+        <input type="hidden" name="submission_id" value="{$sid}">
+        <input type="hidden" name="back" value="{$backUrl}">
+        <button type="submit" class="px-3 py-1 rounded-md text-xs font-medium {$spamBtnCls}" title="Marchează ca spam — exclus din toate agregările dar rămâne vizibil în admin">{$spamBtnLabel}</button>
       </form>
       <form method="POST" action="/admin?action=delete_submission" class="inline"
             onsubmit="return confirm('Sigur dispari rândul #{$sid} complet? Datele rămân în DB (soft-delete) dar nu mai apar în admin sau în statistici.');">
