@@ -1,10 +1,18 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/../db.php';
-cors_headers();
+check_request_origin();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     json_response(['error' => 'Method not allowed'], 405);
+}
+
+// Per-IP rate limit: max 10 submits per hour (per source IP behind nginx X-Forwarded-For)
+rate_limit('submit:' . client_ip(), 10, 3600);
+
+// Cap raw body size before parsing (1 MB is plenty; legit submits are ~1 KB)
+if (($_SERVER['CONTENT_LENGTH'] ?? 0) > 1_048_576) {
+    json_response(['error' => 'Payload too large'], 413);
 }
 
 $raw = file_get_contents('php://input');
@@ -49,14 +57,20 @@ if ($domeniu !== null) {
 
 $entries = $body['entries'] ?? [];
 if (!is_array($entries)) json_response(['error' => 'Entries invalid'], 400);
+if (count($entries) > 50) json_response(['error' => 'Prea multe intrări'], 400);
+
+const AMOUNT_MAX = 100_000_000_000; // 100 miliarde RON — safety cap, dincolo de orice realist
 
 $cleaned = [];
 foreach ($entries as $e) {
     if (!is_array($e)) continue;
     $kind = (string)($e['kind'] ?? '');
     $type = trim((string)($e['type'] ?? ''));
-    $amount = (float)($e['amount'] ?? 0);
+    $rawAmt = $e['amount'] ?? 0;
+    if (!is_numeric($rawAmt)) continue;
+    $amount = (int)round((float)$rawAmt);
     if ($amount <= 0) continue;
+    if ($amount > AMOUNT_MAX) json_response(['error' => 'Sumă peste limita admisă'], 400);
     if ($kind === 'datorie') {
         if (!in_array($type, DATORII_TYPES, true)) json_response(['error' => "Tip datorie invalid: $type"], 400);
     } elseif ($kind === 'asset') {

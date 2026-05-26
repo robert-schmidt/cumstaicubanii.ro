@@ -267,7 +267,6 @@ export default function FormPage({ uuid }) {
                       <option value="">— alege —</option>
                       <option value="M">Masculin</option>
                       <option value="F">Feminin</option>
-                      <option value="X">Prefer să nu spun</option>
                     </select>
                   </Field>
                   <Field label="Persoane în întreținere" error={demoErrors.persoane_intretinere}>

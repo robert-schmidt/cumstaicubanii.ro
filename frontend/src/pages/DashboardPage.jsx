@@ -105,7 +105,6 @@ function Filters({ meta, filters, onChange }) {
           <option value="">👤 Orice sex</option>
           <option value="M">Masculin</option>
           <option value="F">Feminin</option>
-          <option value="X">Prefer să nu spun</option>
         </select>
         <select className={pill(!!filters.ageGroup)} value={filters.ageGroup} onChange={e => onChange({ ...filters, ageGroup: e.target.value })}>
           <option value="">🎂 Orice vârstă</option>
@@ -248,6 +247,16 @@ function PercentileCard({ label, pct, betterHigh }) {
   const headline = betterHigh
     ? (pct >= 50 ? `Top ${topR}%` : `Sub medie`)
     : (pct <= 50 ? `Sub medie 🎉` : `Top ${topR}% (datorii mari)`);
+
+  // Plain-Romanian comparator under the bar — no statistics jargon.
+  // pct = % din populație care au valori mai mici decât tine.
+  let compare;
+  if (betterHigh) {
+    compare = `mai mult decât ${pctR}% dintre cei care au răspuns`;
+  } else {
+    compare = `mai mult decât ${pctR}% dintre cei care au răspuns (datorii)`;
+  }
+
   return (
     <div className="rounded-xl border border-slate-200 p-4">
       <p className="text-xs uppercase tracking-wider text-slate-500">{label}</p>
@@ -259,7 +268,7 @@ function PercentileCard({ label, pct, betterHigh }) {
             ? (pct >= 75 ? 'bg-emerald-500' : pct >= 50 ? 'bg-emerald-400' : pct >= 25 ? 'bg-amber-400' : 'bg-rose-400')
             : (pct <= 25 ? 'bg-emerald-500' : pct <= 50 ? 'bg-emerald-400' : pct <= 75 ? 'bg-amber-400' : 'bg-rose-400'))} />
       </div>
-      <p className="mt-2 text-xs text-slate-500">ești în percentila {pctR}</p>
+      <p className="mt-2 text-xs text-slate-500">{compare}</p>
     </div>
   );
 }
@@ -376,6 +385,7 @@ function DomeniuList({ rows }) {
 
 function ShareCard({ user }) {
   const [toast, setToast] = useState(null);
+  const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
   const tD = Math.round(100 - user.percentile_datorii);
   const tA = Math.round(100 - user.percentile_asset);
   const tN = Math.round(100 - user.percentile_net_worth);
@@ -401,10 +411,29 @@ function ShareCard({ user }) {
     } catch { return false; }
   }
 
-  async function shareCopyAware(targetUrl, platform) {
+  async function nativeShare() {
+    try {
+      await navigator.share({ title: 'Datorii vs Asset-uri', text: message, url });
+      return true;
+    } catch (e) {
+      // User cancel = AbortError, ignore
+      return false;
+    }
+  }
+
+  // For FB/LinkedIn: prefer Web Share API (the only way text actually gets pre-filled).
+  // Fall back to copy-to-clipboard + open the platform's URL-only sharer.
+  async function shareToFacebook() {
+    if (canNativeShare) { await nativeShare(); return; }
     const ok = await copyText();
-    if (ok) flash(`Textul a fost copiat — lipește-l manual în fereastra ${platform} (nu permite prefill).`);
-    window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    if (ok) flash('Textul e copiat — Facebook nu permite prefill din browser, lipește-l în fereastra de share.');
+    window.open(fbUrl, '_blank', 'noopener,noreferrer');
+  }
+  async function shareToLinkedIn() {
+    if (canNativeShare) { await nativeShare(); return; }
+    const ok = await copyText();
+    if (ok) flash('Textul e copiat — LinkedIn nu permite prefill din browser, lipește-l în fereastra de share.');
+    window.open(liUrl, '_blank', 'noopener,noreferrer');
   }
 
   async function justCopy() {
@@ -423,13 +452,18 @@ function ShareCard({ user }) {
           <p className="mt-1.5 text-slate-800 italic leading-relaxed">"{message}"</p>
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
-          <ShareBtnButton onClick={() => shareCopyAware(fbUrl, 'Facebook')} label="Facebook" bg="bg-[#1877F2]" hover="hover:bg-[#0e63d4]">
+          {canNativeShare && (
+            <ShareBtnButton onClick={nativeShare} label="Share" bg="bg-slate-900" hover="hover:bg-slate-800">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+            </ShareBtnButton>
+          )}
+          <ShareBtnButton onClick={shareToFacebook} label="Facebook" bg="bg-[#1877F2]" hover="hover:bg-[#0e63d4]">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M22 12a10 10 0 1 0-11.56 9.88v-6.99H7.9V12h2.54V9.79c0-2.5 1.5-3.89 3.78-3.89 1.1 0 2.24.2 2.24.2v2.47h-1.27c-1.24 0-1.63.77-1.63 1.56V12h2.78l-.44 2.89h-2.34v6.99A10 10 0 0 0 22 12Z"/></svg>
           </ShareBtnButton>
           <ShareBtnLink href={twUrl} label="X / Twitter" bg="bg-slate-900" hover="hover:bg-slate-800">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2H21.5l-7.5 8.57L23 22h-6.99l-5.21-6.79L4.8 22H1.54l8.04-9.18L1 2h7.13l4.7 6.21L18.24 2Zm-1.22 18h1.82L7.06 4H5.14l11.88 16Z"/></svg>
           </ShareBtnLink>
-          <ShareBtnButton onClick={() => shareCopyAware(liUrl, 'LinkedIn')} label="LinkedIn" bg="bg-[#0A66C2]" hover="hover:bg-[#08539e]">
+          <ShareBtnButton onClick={shareToLinkedIn} label="LinkedIn" bg="bg-[#0A66C2]" hover="hover:bg-[#08539e]">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20.45 20.45h-3.55v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.13 1.45-2.13 2.94v5.67H9.36V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28ZM5.34 7.43a2.06 2.06 0 1 1 0-4.13 2.06 2.06 0 0 1 0 4.13ZM7.12 20.45H3.56V9h3.56v11.45ZM22.22 0H1.77C.79 0 0 .77 0 1.72v20.55C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.73V1.72C24 .77 23.2 0 22.22 0Z"/></svg>
           </ShareBtnButton>
           <ShareBtnLink href={waUrl} label="WhatsApp" bg="bg-[#25D366]" hover="hover:bg-[#1eb558]">

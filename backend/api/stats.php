@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/../db.php';
-cors_headers();
+check_request_origin();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     json_response(['error' => 'Method not allowed'], 405);
