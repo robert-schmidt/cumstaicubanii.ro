@@ -62,10 +62,12 @@ function fetch_submissions(PDO $pdo, ?string $judet, ?string $sex, ?array $ageRa
 }
 
 // Fetch all entries for a specific submission (used for the personal "Tu" card).
-// We DO NOT filter on status here — the user sees what they entered. Aggregations
-// elsewhere filter on status=1.
+// We DO NOT filter on status here — the user sees exactly what they entered.
+// Whether each entry is approved or flagged is intentionally NOT exposed to the
+// user-facing response; only aggregations (population/breakdown/by_*) silently
+// exclude flagged entries.
 function fetch_entries_for(PDO $pdo, int $sid): array {
-    $stmt = $pdo->prepare('SELECT kind, type, amount, status FROM entries WHERE submission_id = ?');
+    $stmt = $pdo->prepare('SELECT kind, type, amount FROM entries WHERE submission_id = ?');
     $stmt->execute([$sid]);
     return $stmt->fetchAll();
 }
@@ -138,26 +140,21 @@ if ($sid !== '') {
 if ($u) {
         $userEntries = fetch_entries_for($pdo, (int)$u['id']);
         $td = 0; $ta = 0;
-        $tdApproved = 0; $taApproved = 0;
-        $flaggedCount = 0;
         $byTypeDatorii = []; $byTypeAsset = [];
         foreach ($userEntries as $e) {
             $amt = (int)$e['amount'];
-            $approved = (int)$e['status'] === 1;
-            if (!$approved) $flaggedCount++;
             if ($e['kind'] === 'datorie') {
                 $td += $amt;
-                if ($approved) $tdApproved += $amt;
                 $byTypeDatorii[$e['type']] = ($byTypeDatorii[$e['type']] ?? 0) + $amt;
             } else {
                 $ta += $amt;
-                if ($approved) $taApproved += $amt;
                 $byTypeAsset[$e['type']] = ($byTypeAsset[$e['type']] ?? 0) + $amt;
             }
         }
-        // Percentile uses APPROVED totals (matches the population definition,
-        // which only sums status=1 entries per submission). Display uses raw
-        // totals so the user sees what they entered.
+        // User-facing values use RAW totals (everything they entered). Percentile
+        // also uses the user's raw total — compared to the population of approved
+        // submissions, giving an honest rank of THEIR data against the clean baseline.
+        // We never expose whether any of their entries were flagged.
         $userLatest = [
             'submission_id' => (int)$u['id'],
             'session_id' => $u['session_id'],
@@ -165,13 +162,12 @@ if ($u) {
             'total_datorii' => $td,
             'total_asset' => $ta,
             'net_worth' => $ta - $td,
-            'flagged_count' => $flaggedCount,
             'ratio_datorii_asset' => $ta > 0 ? round($td / $ta, 3) : null,
             'by_type_datorii' => $byTypeDatorii,
             'by_type_asset' => $byTypeAsset,
-            'percentile_net_worth' => (int)round(percentile_of($taApproved - $tdApproved, $globalNet, true)),
-            'percentile_datorii'   => (int)round(percentile_of($tdApproved, $globalDatorii, true)),
-            'percentile_asset'     => (int)round(percentile_of($taApproved, $globalAsset, true)),
+            'percentile_net_worth' => (int)round(percentile_of($ta - $td, $globalNet, true)),
+            'percentile_datorii'   => (int)round(percentile_of($td, $globalDatorii, true)),
+            'percentile_asset'     => (int)round(percentile_of($ta, $globalAsset, true)),
         ];
 }
 
@@ -379,13 +375,22 @@ $population = [
     'median_net_worth' => (int)round(median($globalNet)),
 ];
 
-// Global moderation health (NOT filtered — admin/credibility signal).
-$entryCounts = $pdo->query('SELECT status, COUNT(*) c FROM entries GROUP BY status')->fetchAll();
-$entriesApproved = 0; $entriesFlagged = 0;
-foreach ($entryCounts as $r) {
-    if ((int)$r['status'] === 1) $entriesApproved = (int)$r['c'];
-    else $entriesFlagged = (int)$r['c'];
-}
+// Submission-level moderation counts (1 user = 1 unit, latest per UUID, global).
+// "approved" = submission has at least one status=1 entry (counted in stats).
+// "troli"    = submission has zero status=1 entries (filtered out everywhere).
+$submissionCounts = $pdo->query(
+    "SELECT
+        SUM(CASE WHEN has_approved = 1 THEN 1 ELSE 0 END) AS approved,
+        SUM(CASE WHEN has_approved = 0 THEN 1 ELSE 0 END) AS flagged
+     FROM (
+        SELECT s.id,
+               (SELECT 1 FROM entries e WHERE e.submission_id = s.id AND e.status = 1 LIMIT 1) IS NOT NULL AS has_approved
+        FROM submissions s
+        INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
+     ) sub"
+)->fetch();
+$submissionsApproved = (int)($submissionCounts['approved'] ?? 0);
+$submissionsFlagged  = (int)($submissionCounts['flagged']  ?? 0);
 
 $result = [
     'filters' => [
@@ -393,8 +398,8 @@ $result = [
         'sex' => $sex,
         'age_group' => $ageGroup,
     ],
-    'entries_approved' => $entriesApproved,
-    'entries_flagged'  => $entriesFlagged,
+    'submissions_approved' => $submissionsApproved,
+    'submissions_flagged'  => $submissionsFlagged,
     'population' => $population,
     'breakdown' => $breakdown,
     'by_judet' => $byJudet,
