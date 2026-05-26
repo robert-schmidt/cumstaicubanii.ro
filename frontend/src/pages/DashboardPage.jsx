@@ -91,26 +91,35 @@ export default function DashboardPage({ uuid, sid }) {
 }
 
 function Filters({ meta, filters, onChange }) {
-  const cls = 'rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm';
+  const active = !!(filters.judet || filters.sex || filters.ageGroup);
+  const base = 'shrink-0 rounded-full border bg-white pl-3.5 pr-3 py-1.5 text-sm shadow-sm hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/15 focus:border-slate-500 transition cursor-pointer';
+  const pill = (isSet) => base + ' ' + (isSet ? 'border-slate-900 text-slate-900 bg-slate-50' : 'border-slate-300 text-slate-700');
   return (
-    <div className="flex flex-wrap gap-2">
-      <select className={cls} value={filters.judet} onChange={e => onChange({ ...filters, judet: e.target.value })}>
-        <option value="">Toate județele</option>
-        {meta.judete.map(j => <option key={j} value={j}>{j}</option>)}
-      </select>
-      <select className={cls} value={filters.sex} onChange={e => onChange({ ...filters, sex: e.target.value })}>
-        <option value="">Orice sex</option>
-        <option value="M">Masculin</option>
-        <option value="F">Feminin</option>
-        <option value="X">Prefer să nu spun</option>
-      </select>
-      <select className={cls} value={filters.ageGroup} onChange={e => onChange({ ...filters, ageGroup: e.target.value })}>
-        <option value="">Orice vârstă</option>
-        {meta.age_groups.map(g => <option key={g} value={g}>{g} ani</option>)}
-      </select>
-      {(filters.judet || filters.sex || filters.ageGroup) && (
-        <button onClick={() => onChange({ judet: '', sex: '', ageGroup: '' })} className="text-sm text-slate-500 hover:text-slate-900 px-2">resetează</button>
-      )}
+    <div className="-mx-4 px-4 sm:mx-0 sm:px-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="flex items-center gap-2 sm:flex-wrap min-w-min">
+        <select className={pill(!!filters.judet)} value={filters.judet} onChange={e => onChange({ ...filters, judet: e.target.value })}>
+          <option value="">📍 Toate județele</option>
+          {meta.judete.map(j => <option key={j} value={j}>{j}</option>)}
+        </select>
+        <select className={pill(!!filters.sex)} value={filters.sex} onChange={e => onChange({ ...filters, sex: e.target.value })}>
+          <option value="">👤 Orice sex</option>
+          <option value="M">Masculin</option>
+          <option value="F">Feminin</option>
+          <option value="X">Prefer să nu spun</option>
+        </select>
+        <select className={pill(!!filters.ageGroup)} value={filters.ageGroup} onChange={e => onChange({ ...filters, ageGroup: e.target.value })}>
+          <option value="">🎂 Orice vârstă</option>
+          {meta.age_groups.map(g => <option key={g} value={g}>{g} ani</option>)}
+        </select>
+        {active && (
+          <button
+            onClick={() => onChange({ judet: '', sex: '', ageGroup: '' })}
+            className="shrink-0 text-xs text-slate-500 hover:text-rose-600 px-2 py-1.5 rounded-full hover:bg-rose-50 transition cursor-pointer"
+          >
+            ✕ resetează
+          </button>
+        )}
+      </div>
     </div>
   );
 }
