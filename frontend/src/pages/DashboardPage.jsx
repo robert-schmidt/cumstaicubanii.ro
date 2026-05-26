@@ -81,6 +81,27 @@ export default function DashboardPage({ uuid, sid }) {
       </Card>
 
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card title="Cine raportează datorii?">
+          <CoverageDistribution
+            yes={population.with_datorii_count ?? 0}
+            total={population.count}
+            labelYes="Au datorii"
+            labelNo="Nu au datorii"
+            colorYes="#ef4444"
+          />
+        </Card>
+        <Card title="Cine raportează asset-uri?">
+          <CoverageDistribution
+            yes={population.with_asset_count ?? 0}
+            total={population.count}
+            labelYes="Au asset-uri"
+            labelNo="Nu au asset-uri"
+            colorYes="#10b981"
+          />
+        </Card>
+      </section>
+
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card title="Optimiști vs pesimiști — distribuție">
           <OptimismDistribution optimism={optimism} />
         </Card>
@@ -582,6 +603,43 @@ function PersoaneStats({ rows }) {
       })}
       <p className="text-xs text-slate-500 pt-1">
         Doar utilizatorii care au completat secțiunea demografică. Bară roșie = net worth negativ (mai multe datorii decât asset-uri).
+      </p>
+    </div>
+  );
+}
+
+function CoverageDistribution({ yes, total, labelYes, labelNo, colorYes }) {
+  const no = Math.max(0, total - yes);
+  if (total === 0) return <p className="text-sm text-slate-500">Fără date.</p>;
+  const pctYes = Math.round((yes / total) * 100);
+  const pctNo  = 100 - pctYes;
+  return (
+    <div>
+      {/* Stacked bar */}
+      <div className="flex h-3 rounded-full overflow-hidden bg-slate-100" aria-hidden="true">
+        <motion.div
+          initial={{ width: 0 }} animate={{ width: pctYes + '%' }} transition={{ duration: 0.6 }}
+          style={{ background: colorYes }}
+        />
+      </div>
+
+      <div className="mt-4 space-y-3">
+        <div className="flex items-center gap-3">
+          <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: colorYes }} />
+          <span className="font-medium text-slate-800">{labelYes}</span>
+          <span className="ml-auto text-2xl font-bold" style={{ color: colorYes }}>{pctYes}%</span>
+          <span className="text-sm text-slate-500 w-14 text-right">({yes})</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="inline-block w-2.5 h-2.5 rounded-full bg-slate-300" />
+          <span className="font-medium text-slate-800">{labelNo}</span>
+          <span className="ml-auto text-2xl font-bold text-slate-500">{pctNo}%</span>
+          <span className="text-sm text-slate-500 w-14 text-right">({no})</span>
+        </div>
+      </div>
+      <p className="text-xs text-slate-500 pt-3 mt-3 border-t border-slate-100">
+        Total: <strong className="text-slate-700">{total}</strong> răspunsuri{total > 0 ? '' : ''}.
+        1 sesiune = 1 vot, nu se contează entries individuale.
       </p>
     </div>
   );
