@@ -18,8 +18,8 @@ $siteUrl  = 'https://cumstaicubanii.ro';
 $imageUrl = $siteUrl . '/og-image.png';
 
 if ($d !== null && $v !== null && $n !== null) {
-    $title       = "Top {$n}% net worth · Top {$v}% venituri · Top {$d}% datorii — cumstaicubanii.ro";
-    $description = "💰 Mă situez în top {$d}% ca datorii, top {$v}% ca venituri, top {$n}% ca net worth. Tu cum stai cu banii?";
+    $title       = "Top {$n}% net worth · Top {$v}% asset-uri · Top {$d}% datorii — cumstaicubanii.ro";
+    $description = "💰 Mă situez în top {$d}% ca datorii, top {$v}% ca asset-uri, top {$n}% ca net worth. Tu cum stai cu banii?";
     $shareUrl    = "{$siteUrl}/share?d={$d}&v={$v}&n={$n}";
 } else {
     $title       = 'Datorii vs Asset-uri — situația ta financiară, anonim · cumstaicubanii.ro';

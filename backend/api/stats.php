@@ -176,7 +176,18 @@ if ($u) {
 }
 
 // Distribution by judet (always global, ignores filters)
-$judetRows = $pdo->query(
+// Helpers: append the active filters to an aggregation query. `skip` lists
+// dimensions we shouldn't filter on (e.g. when grouping BY that dimension).
+$buildFilters = function(array $skip = []) use ($judet, $sex, $ageRange): array {
+    $sql = ''; $params = [];
+    if ($judet !== null && !in_array('judet', $skip, true))     { $sql .= ' AND s.judet = :judet';       $params[':judet'] = $judet; }
+    if ($sex !== null && !in_array('sex', $skip, true))          { $sql .= ' AND s.sex = :sex';           $params[':sex']   = $sex; }
+    if ($ageRange !== null && !in_array('age', $skip, true))     { $sql .= ' AND s.varsta BETWEEN :amin AND :amax'; $params[':amin'] = $ageRange[0]; $params[':amax'] = $ageRange[1]; }
+    return [$sql, $params];
+};
+
+[$byJudetWhere, $byJudetParams] = $buildFilters(['judet']);
+$judetStmt = $pdo->prepare(
     "SELECT s.judet,
             COUNT(DISTINCT s.id) AS n,
             AVG(sub.total_asset - sub.total_datorii) AS avg_net,
@@ -187,13 +198,15 @@ $judetRows = $pdo->query(
      INNER JOIN (
          SELECT submission_id,
                 SUM(CASE WHEN kind = 'datorie' THEN amount ELSE 0 END) AS total_datorii,
-                SUM(CASE WHEN kind = 'asset' THEN amount ELSE 0 END) AS total_asset
+                SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
          FROM entries WHERE status = 1 GROUP BY submission_id
      ) sub ON sub.submission_id = s.id
-     WHERE s.judet IS NOT NULL
+     WHERE s.judet IS NOT NULL $byJudetWhere
      GROUP BY s.judet
      ORDER BY avg_net DESC"
-)->fetchAll();
+);
+$judetStmt->execute($byJudetParams);
+$judetRows = $judetStmt->fetchAll();
 
 $byJudet = array_map(function ($r) {
     return [
@@ -206,7 +219,8 @@ $byJudet = array_map(function ($r) {
 }, $judetRows);
 
 // Distribution by domeniu (global)
-$domeniuRows = $pdo->query(
+[$byDomWhere, $byDomParams] = $buildFilters();
+$domStmt = $pdo->prepare(
     "SELECT s.domeniu,
             COUNT(DISTINCT s.id) AS n,
             AVG(sub.total_asset - sub.total_datorii) AS avg_net,
@@ -220,11 +234,13 @@ $domeniuRows = $pdo->query(
                 SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
          FROM entries WHERE status = 1 GROUP BY submission_id
      ) sub ON sub.submission_id = s.id
-     WHERE s.domeniu IS NOT NULL AND s.domeniu != ''
+     WHERE s.domeniu IS NOT NULL AND s.domeniu != '' $byDomWhere
      GROUP BY s.domeniu
      HAVING n >= 1
      ORDER BY avg_net DESC"
-)->fetchAll();
+);
+$domStmt->execute($byDomParams);
+$domeniuRows = $domStmt->fetchAll();
 
 $byDomeniu = array_map(function ($r) {
     return [
@@ -237,7 +253,8 @@ $byDomeniu = array_map(function ($r) {
 }, $domeniuRows);
 
 // Distribution by persoane_intretinere (bucketed 0,1,2,3,4+)
-$piRows = $pdo->query(
+[$byPIWhere, $byPIParams] = $buildFilters();
+$piStmt = $pdo->prepare(
     "SELECT
         CASE
             WHEN s.persoane_intretinere >= 4 THEN '4+'
@@ -255,10 +272,12 @@ $piRows = $pdo->query(
                 SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
          FROM entries WHERE status = 1 GROUP BY submission_id
      ) sub ON sub.submission_id = s.id
-     WHERE s.persoane_intretinere IS NOT NULL
+     WHERE s.persoane_intretinere IS NOT NULL $byPIWhere
      GROUP BY bucket
      ORDER BY CASE bucket WHEN '0' THEN 0 WHEN '1' THEN 1 WHEN '2' THEN 2 WHEN '3' THEN 3 WHEN '4+' THEN 4 END"
-)->fetchAll();
+);
+$piStmt->execute($byPIParams);
+$piRows = $piStmt->fetchAll();
 
 $byPI = array_map(function ($r) {
     return [
@@ -271,7 +290,8 @@ $byPI = array_map(function ($r) {
 }, $piRows);
 
 // Optimism correlation
-$optStmt = $pdo->query(
+[$optWhere, $optParams] = $buildFilters();
+$optStmt = $pdo->prepare(
     "SELECT s.optimist,
             sub.total_asset - sub.total_datorii AS net
      FROM submissions s
@@ -281,8 +301,10 @@ $optStmt = $pdo->query(
                 SUM(CASE WHEN kind = 'datorie' THEN amount ELSE 0 END) AS total_datorii,
                 SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
          FROM entries WHERE status = 1 GROUP BY submission_id
-     ) sub ON sub.submission_id = s.id"
+     ) sub ON sub.submission_id = s.id
+     WHERE 1=1 $optWhere"
 );
+$optStmt->execute($optParams);
 $optimistNet = []; $pesimistNet = [];
 foreach ($optStmt as $r) {
     if ((int)$r['optimist'] === 1) $optimistNet[] = (float)$r['net'];
