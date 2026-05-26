@@ -86,30 +86,21 @@ function median(array $nums): float {
 }
 
 /**
- * Compute the percentile rank of $value within $nums, optionally removing the
- * user's own data point first.
+ * Mid-rank percentile of $value within $nums (a pre-filtered population that
+ * does NOT include the user themselves — caller is responsible for that).
  *
- * Definition: percentage of OTHER population members that have a value lower
- * than the user. Ties contribute 0.5 (mid-rank method, the most accurate way
- * to handle equality and yield a continuous distribution).
+ * Ties contribute 0.5 each, the standard accurate handling that yields a
+ * continuous distribution.
  *
- * Integer comparison: amounts are stored as BIGINT and never float, so we
- * cast both sides to int to avoid floating-point equality bugs.
- *
- * Self-exclusion: $excludeId, if supplied, removes one occurrence of $value
- * from the population so a user isn't compared against themselves.
+ * Integer comparison: amounts are stored as BIGINT, so we cast both sides
+ * to int to avoid floating-point equality glitches.
  */
-function percentile_of(int $value, array $nums, bool $excludeSelfOnce = false): float {
-    if (count($nums) === 0) return 0.0;
-    $nums = array_map('intval', $nums);
-    if ($excludeSelfOnce) {
-        $idx = array_search($value, $nums, true);
-        if ($idx !== false) array_splice($nums, $idx, 1);
-    }
+function percentile_of(int $value, array $nums): float {
     $n = count($nums);
     if ($n === 0) return 0.0;
-    $below = 0;
+    $below = 0.0;
     foreach ($nums as $x) {
+        $x = (int)$x;
         if ($x < $value) $below++;
         elseif ($x === $value) $below += 0.5;
     }
@@ -158,12 +149,28 @@ if ($u) {
                 $byTypeAsset[$e['type']] = ($byTypeAsset[$e['type']] ?? 0) + $amt;
             }
         }
-        // User-facing values use RAW totals (everything they entered). Percentile
-        // also uses the user's raw total — compared to the population of approved
-        // submissions, giving an honest rank of THEIR data against the clean baseline.
-        // We never expose whether any of their entries were flagged.
+
+        // Build percentile populations: exclude self, and for datorii/asset use
+        // only the corresponding sub-population (debtors / asset-holders) so
+        // the ranking matches the median's "typical user of this metric"
+        // semantics. Net worth uses the full population.
+        $userSubId = (int)$u['id'];
+        $pctDatoriiPop = [];
+        $pctAssetPop   = [];
+        $pctNetPop     = [];
+        foreach ($rows as $r) {
+            if ((int)$r['id'] === $userSubId) continue;
+            $td_r = (float)$r['total_datorii'];
+            $ta_r = (float)$r['total_asset'];
+            if ($td_r > 0) $pctDatoriiPop[] = $td_r;
+            if ($ta_r > 0) $pctAssetPop[]   = $ta_r;
+            $pctNetPop[] = $ta_r - $td_r;
+        }
+
+        // Percentile = 0 when the user doesn't report that metric at all
+        // (no debt → at the bottom of the debtor distribution = "Sub medie 🎉").
         $userLatest = [
-            'submission_id' => (int)$u['id'],
+            'submission_id' => $userSubId,
             'session_id' => $u['session_id'],
             'optimist' => (bool)$u['optimist'],
             'total_datorii' => $td,
@@ -172,9 +179,9 @@ if ($u) {
             'ratio_datorii_asset' => $ta > 0 ? round($td / $ta, 3) : null,
             'by_type_datorii' => $byTypeDatorii,
             'by_type_asset' => $byTypeAsset,
-            'percentile_net_worth' => (int)round(percentile_of($ta - $td, $globalNet, true)),
-            'percentile_datorii'   => (int)round(percentile_of($td, $globalDatorii, true)),
-            'percentile_asset'     => (int)round(percentile_of($ta, $globalAsset, true)),
+            'percentile_datorii'   => $td > 0 ? (int)round(percentile_of($td, $pctDatoriiPop)) : 0,
+            'percentile_asset'     => $ta > 0 ? (int)round(percentile_of($ta, $pctAssetPop))   : 0,
+            'percentile_net_worth' => (int)round(percentile_of($ta - $td, $pctNetPop)),
         ];
 }
 
