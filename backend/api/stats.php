@@ -36,9 +36,9 @@ if ($ageGroup !== null) {
 }
 
 function fetch_submissions(PDO $pdo, ?string $judet, ?string $sex, ?array $ageRange): array {
-    // Population = latest submission per UUID (dedupe re-submits), and only
-    // those with at least one approved entry. Each row's totals sum only
-    // status=1 entries.
+    // Population = latest submission per UUID (dedupe re-submits), not
+    // soft-deleted, with at least one approved entry. Each row's totals sum
+    // only status=1 entries.
     $sql = "SELECT s.id, s.uuid, s.optimist, s.judet, s.varsta, s.sex, s.created_at,
                    SUM(CASE WHEN e.kind = 'datorie' THEN e.amount ELSE 0 END) AS total_datorii,
                    SUM(CASE WHEN e.kind = 'asset' THEN e.amount ELSE 0 END) AS total_asset
@@ -47,7 +47,7 @@ function fetch_submissions(PDO $pdo, ?string $judet, ?string $sex, ?array $ageRa
                 SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid
             ) latest ON latest.latest_id = s.id
             INNER JOIN entries e ON e.submission_id = s.id AND e.status = 1
-            WHERE 1=1";
+            WHERE s.deleted_at IS NULL";
     $params = [];
     if ($judet !== null) { $sql .= ' AND s.judet = ?'; $params[] = $judet; }
     if ($sex !== null)   { $sql .= ' AND s.sex = ?';   $params[] = $sex; }
@@ -124,16 +124,23 @@ foreach ($rows as $r) {
     $globalAsset[]   = (float)$r['total_asset'];
     $globalNet[]     = (float)$r['total_asset'] - (float)$r['total_datorii'];
 }
+// For "typical user" datorii / asset stats, exclude rows where that metric is 0
+// (i.e. users who didn't report ANY entry of that kind). Including them
+// would dominate the median when, say, half the population has no debt at all.
+// Net worth is computed over the full population — a user with 0 datorii and
+// 100k asset has a genuinely valid +100k net worth.
+$datoriiOfDebtors  = array_values(array_filter($globalDatorii, fn($x) => $x > 0));
+$assetOfHolders    = array_values(array_filter($globalAsset,   fn($x) => $x > 0));
 
 $userLatest = null;
 $userEntries = [];
 $u = null;
 if ($sid !== '') {
-    $stmt = $pdo->prepare('SELECT id, optimist, session_id FROM submissions WHERE session_id = ? LIMIT 1');
+    $stmt = $pdo->prepare('SELECT id, optimist, session_id FROM submissions WHERE session_id = ? AND deleted_at IS NULL LIMIT 1');
     $stmt->execute([$sid]);
     $u = $stmt->fetch() ?: null;
 } elseif ($uuid !== '') {
-    $stmt = $pdo->prepare('SELECT id, optimist, session_id FROM submissions WHERE uuid = ? ORDER BY id DESC LIMIT 1');
+    $stmt = $pdo->prepare('SELECT id, optimist, session_id FROM submissions WHERE uuid = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 1');
     $stmt->execute([$uuid]);
     $u = $stmt->fetch() ?: null;
 }
@@ -187,8 +194,8 @@ $judetStmt = $pdo->prepare(
     "SELECT s.judet,
             COUNT(DISTINCT s.id) AS n,
             AVG(sub.total_asset - sub.total_datorii) AS avg_net,
-            AVG(sub.total_datorii) AS avg_datorii,
-            AVG(sub.total_asset)   AS avg_asset
+            AVG(NULLIF(sub.total_datorii, 0)) AS avg_datorii,
+            AVG(NULLIF(sub.total_asset, 0))   AS avg_asset
      FROM submissions s
      INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
      INNER JOIN (
@@ -197,7 +204,7 @@ $judetStmt = $pdo->prepare(
                 SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
          FROM entries WHERE status = 1 GROUP BY submission_id
      ) sub ON sub.submission_id = s.id
-     WHERE s.judet IS NOT NULL $byJudetWhere
+     WHERE s.judet IS NOT NULL AND s.deleted_at IS NULL $byJudetWhere
      GROUP BY s.judet
      ORDER BY avg_net DESC"
 );
@@ -220,8 +227,8 @@ $domStmt = $pdo->prepare(
     "SELECT s.domeniu,
             COUNT(DISTINCT s.id) AS n,
             AVG(sub.total_asset - sub.total_datorii) AS avg_net,
-            AVG(sub.total_datorii) AS avg_datorii,
-            AVG(sub.total_asset)   AS avg_asset
+            AVG(NULLIF(sub.total_datorii, 0)) AS avg_datorii,
+            AVG(NULLIF(sub.total_asset, 0))   AS avg_asset
      FROM submissions s
      INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
      INNER JOIN (
@@ -230,7 +237,7 @@ $domStmt = $pdo->prepare(
                 SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
          FROM entries WHERE status = 1 GROUP BY submission_id
      ) sub ON sub.submission_id = s.id
-     WHERE s.domeniu IS NOT NULL AND s.domeniu != '' $byDomWhere
+     WHERE s.domeniu IS NOT NULL AND s.domeniu != '' AND s.deleted_at IS NULL $byDomWhere
      GROUP BY s.domeniu
      HAVING n >= 1
      ORDER BY avg_net DESC"
@@ -268,7 +275,7 @@ $piStmt = $pdo->prepare(
                 SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
          FROM entries WHERE status = 1 GROUP BY submission_id
      ) sub ON sub.submission_id = s.id
-     WHERE s.persoane_intretinere IS NOT NULL $byPIWhere
+     WHERE s.persoane_intretinere IS NOT NULL AND s.deleted_at IS NULL $byPIWhere
      GROUP BY bucket
      ORDER BY CASE bucket WHEN '0' THEN 0 WHEN '1' THEN 1 WHEN '2' THEN 2 WHEN '3' THEN 3 WHEN '4+' THEN 4 END"
 );
@@ -298,7 +305,7 @@ $optStmt = $pdo->prepare(
                 SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
          FROM entries WHERE status = 1 GROUP BY submission_id
      ) sub ON sub.submission_id = s.id
-     WHERE 1=1 $optWhere"
+     WHERE s.deleted_at IS NULL $optWhere"
 );
 $optStmt->execute($optParams);
 $optimistNet = []; $pesimistNet = [];
@@ -313,7 +320,7 @@ $breakdownStmt = $pdo->prepare(
      FROM entries e
      JOIN submissions s ON s.id = e.submission_id
      INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
-     WHERE e.status = 1' .
+     WHERE e.status = 1 AND s.deleted_at IS NULL' .
      ($judet !== null ? ' AND s.judet = :judet' : '') .
      ($sex !== null   ? ' AND s.sex = :sex'     : '') .
      ($ageRange !== null ? ' AND s.varsta BETWEEN :amin AND :amax' : '') .
@@ -334,7 +341,7 @@ $medianStmt = $pdo->prepare(
      FROM entries e
      JOIN submissions s ON s.id = e.submission_id
      INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
-     WHERE e.status = 1' .
+     WHERE e.status = 1 AND s.deleted_at IS NULL' .
      ($judet !== null ? ' AND s.judet = :judet' : '') .
      ($sex !== null   ? ' AND s.sex = :sex'     : '') .
      ($ageRange !== null ? ' AND s.varsta BETWEEN :amin AND :amax' : '') .
@@ -367,12 +374,15 @@ foreach ($breakdownRows as $r) {
 
 $population = [
     'count' => count($rows),
-    'avg_datorii' => (int)round(mean($globalDatorii)),
-    'avg_asset' => (int)round(mean($globalAsset)),
-    'avg_net_worth' => (int)round(mean($globalNet)),
-    'median_datorii' => (int)round(median($globalDatorii)),
-    'median_asset' => (int)round(median($globalAsset)),
+    'avg_datorii'      => (int)round(mean($datoriiOfDebtors)),
+    'avg_asset'        => (int)round(mean($assetOfHolders)),
+    'avg_net_worth'    => (int)round(mean($globalNet)),
+    'median_datorii'   => (int)round(median($datoriiOfDebtors)),
+    'median_asset'     => (int)round(median($assetOfHolders)),
     'median_net_worth' => (int)round(median($globalNet)),
+    // Coverage signals — frontend can show "X% au datorii" if it wants.
+    'with_datorii_count' => count($datoriiOfDebtors),
+    'with_asset_count'   => count($assetOfHolders),
 ];
 
 // Submission-level moderation counts (1 user = 1 unit, latest per UUID, global).
@@ -387,6 +397,7 @@ $submissionCounts = $pdo->query(
                (SELECT 1 FROM entries e WHERE e.submission_id = s.id AND e.status = 1 LIMIT 1) IS NOT NULL AS has_approved
         FROM submissions s
         INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
+        WHERE s.deleted_at IS NULL
      ) sub"
 )->fetch();
 $submissionsApproved = (int)($submissionCounts['approved'] ?? 0);
