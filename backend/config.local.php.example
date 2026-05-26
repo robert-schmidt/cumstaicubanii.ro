@@ -10,4 +10,10 @@ return [
     'db_name' => 'cumstaicubanii_db',
     'db_user' => 'cumstaicubanii_user',
     'db_pass' => 'change-me',
+
+    // Admin board password hash. Generate with:
+    //   php -r 'echo password_hash("YOUR_PASSWORD", PASSWORD_BCRYPT) . PHP_EOL;'
+    // Then paste the resulting $2y$... string below.
+    // Leave empty/null to disable /admin entirely.
+    'admin_password_hash' => null,
 ];

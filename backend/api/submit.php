@@ -66,10 +66,14 @@ foreach ($entries as $e) {
     if (!is_array($e)) continue;
     $kind = (string)($e['kind'] ?? '');
     $type = trim((string)($e['type'] ?? ''));
-    $rawAmt = $e['amount'] ?? 0;
+    $rawAmt = $e['amount'] ?? null;
+    // Integer-only: reject NaN, non-numeric, fractional. Frontend strips
+    // separators already; this is the strict backend gate.
     if (!is_numeric($rawAmt)) continue;
-    $amount = (int)round((float)$rawAmt);
-    if ($amount <= 0) continue;
+    $asFloat = (float)$rawAmt;
+    if ($asFloat <= 0) continue;
+    if ($asFloat !== (float)(int)$asFloat) continue; // reject 1234.56
+    $amount = (int)$asFloat;
     if ($amount > AMOUNT_MAX) json_response(['error' => 'Sumă peste limita admisă'], 400);
     if ($kind === 'datorie') {
         if (!in_array($type, DATORII_TYPES, true)) json_response(['error' => "Tip datorie invalid: $type"], 400);
@@ -93,9 +97,10 @@ try {
     $stmt->execute([$uuid, $sessionId, $optimist, $judet, $varsta, $sex, $pi, $domeniu]);
     $rowId = (int)$pdo->lastInsertId();
 
-    $ins = $pdo->prepare('INSERT INTO entries(submission_id, kind, type, amount) VALUES (?, ?, ?, ?)');
+    $ins = $pdo->prepare('INSERT INTO entries(submission_id, kind, type, amount, status) VALUES (?, ?, ?, ?, ?)');
     foreach ($cleaned as $e) {
-        $ins->execute([$rowId, $e['kind'], $e['type'], $e['amount']]);
+        $status = compute_entry_status($pdo, $e['kind'], $e['type'], (int)$e['amount']);
+        $ins->execute([$rowId, $e['kind'], $e['type'], $e['amount'], $status]);
     }
     $pdo->commit();
 } catch (Throwable $t) {

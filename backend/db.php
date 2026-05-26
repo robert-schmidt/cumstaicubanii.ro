@@ -36,6 +36,57 @@ function db(): PDO {
     return $pdo;
 }
 
+/**
+ * Compute approval status for a new entry, based on whether its amount is an
+ * outlier vs the existing approved entries of the same (kind, type).
+ *
+ * Rule: if there are <OUTLIER_MIN_SAMPLE> prior approved entries for that pair,
+ * we don't have enough data to detect outliers — approve (return 1).
+ * Otherwise compute the median of approved amounts and reject the new value if
+ * it falls outside [median / 2, median * 2] (i.e. more than 100% below or above
+ * the median).
+ *
+ * Returns 1 (approved) or 0 (flagged).
+ */
+const OUTLIER_MIN_SAMPLE = 5;
+
+function compute_entry_status(PDO $pdo, string $kind, string $type, int $amount): int {
+    if ($amount <= 0) return 0; // sanity — caller should already filter, but be safe
+
+    static $medianCache = [];
+    $cacheKey = $kind . '|' . $type;
+
+    if (!array_key_exists($cacheKey, $medianCache)) {
+        $stmt = $pdo->prepare(
+            'SELECT amount FROM entries
+             WHERE kind = ? AND type = ? AND status = 1
+             ORDER BY amount ASC'
+        );
+        $stmt->execute([$kind, $type]);
+        $values = array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+
+        if (count($values) < OUTLIER_MIN_SAMPLE) {
+            $medianCache[$cacheKey] = null;
+        } else {
+            $n = count($values);
+            $m = intdiv($n, 2);
+            $median = $n % 2 === 1
+                ? (float)$values[$m]
+                : ($values[$m - 1] + $values[$m]) / 2.0;
+            $medianCache[$cacheKey] = $median;
+        }
+    }
+
+    $median = $medianCache[$cacheKey];
+    if ($median === null) return 1;          // bootstrap — not enough baseline data
+    if ($median <= 0) return 1;              // defensive (cannot happen with amount>0 invariant)
+
+    $lower = $median / 2.0;
+    $upper = $median * 2.0;
+    if ($amount < $lower || $amount > $upper) return 0;
+    return 1;
+}
+
 function generate_sid(PDO $pdo): string {
     $alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
     $len = strlen($alphabet);
