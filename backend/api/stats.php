@@ -379,12 +379,22 @@ $population = [
     'median_net_worth' => (int)round(median($globalNet)),
 ];
 
+// Global moderation health (NOT filtered — admin/credibility signal).
+$entryCounts = $pdo->query('SELECT status, COUNT(*) c FROM entries GROUP BY status')->fetchAll();
+$entriesApproved = 0; $entriesFlagged = 0;
+foreach ($entryCounts as $r) {
+    if ((int)$r['status'] === 1) $entriesApproved = (int)$r['c'];
+    else $entriesFlagged = (int)$r['c'];
+}
+
 $result = [
     'filters' => [
         'judet' => $judet,
         'sex' => $sex,
         'age_group' => $ageGroup,
     ],
+    'entries_approved' => $entriesApproved,
+    'entries_flagged'  => $entriesFlagged,
     'population' => $population,
     'breakdown' => $breakdown,
     'by_judet' => $byJudet,

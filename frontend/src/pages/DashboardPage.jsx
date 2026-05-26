@@ -27,14 +27,16 @@ export default function DashboardPage({ uuid, sid }) {
   if (error) return <div className="max-w-3xl mx-auto px-4 py-16 text-rose-600">{error}</div>;
   if (!data) return null;
 
-  const { user, population, breakdown, by_judet, by_domeniu, by_persoane_intretinere, optimism, meta } = data;
+  const { user, population, breakdown, by_judet, by_domeniu, by_persoane_intretinere, optimism, meta, entries_approved, entries_flagged } = data;
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 sm:py-10 space-y-8">
       <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-slate-900">Cum stai față de ceilalți</h1>
-          <p className="text-slate-600 mt-1">Bazat pe <strong>{formatNumber(population.count)}</strong> submit-uri{filters.judet || filters.sex || filters.ageGroup ? ' (filtrate)' : ''}.</p>
+          <p className="text-slate-600 mt-1">
+            <strong>{formatNumber(entries_approved)}</strong> intrări aprobate · <strong>{formatNumber(entries_flagged)}</strong> troli ⚠️
+          </p>
         </div>
         <Filters meta={meta} filters={filters} onChange={setFilters} />
       </header>
