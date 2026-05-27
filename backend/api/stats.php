@@ -226,13 +226,13 @@ $buildFilters = function(array $skip = []) use ($judet, $sex, $ageRange): array 
     return [$sql, $params];
 };
 
+// By-group net worth uses MEDIAN per bucket — averages get skewed by a handful
+// of high-net-worth outliers and stop reflecting "the typical user in this
+// group". We fetch per-submission net values and median in PHP (same pattern
+// as the per-type breakdown).
 [$byJudetWhere, $byJudetParams] = $buildFilters(['judet']);
 $judetStmt = $pdo->prepare(
-    "SELECT s.judet,
-            COUNT(DISTINCT s.id) AS n,
-            AVG(sub.total_asset - sub.total_datorii) AS avg_net,
-            AVG(NULLIF(sub.total_datorii, 0)) AS avg_datorii,
-            AVG(NULLIF(sub.total_asset, 0))   AS avg_asset
+    "SELECT s.judet, (sub.total_asset - sub.total_datorii) AS net
      FROM submissions s
      INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
      INNER JOIN (
@@ -241,31 +241,27 @@ $judetStmt = $pdo->prepare(
                 SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
          FROM entries WHERE status = 1 GROUP BY submission_id
      ) sub ON sub.submission_id = s.id
-     WHERE s.judet IS NOT NULL AND s.deleted_at IS NULL AND s.is_spam = 0 $byJudetWhere
-     GROUP BY s.judet
-     ORDER BY avg_net DESC"
+     WHERE s.judet IS NOT NULL AND s.deleted_at IS NULL AND s.is_spam = 0 $byJudetWhere"
 );
 $judetStmt->execute($byJudetParams);
-$judetRows = $judetStmt->fetchAll();
-
-$byJudet = array_map(function ($r) {
-    return [
-        'judet' => $r['judet'],
-        'count' => (int)$r['n'],
-        'avg_net' => (int)round((float)$r['avg_net']),
-        'avg_datorii' => (int)round((float)$r['avg_datorii']),
-        'avg_asset' => (int)round((float)$r['avg_asset']),
+$judetNets = [];
+foreach ($judetStmt as $r) {
+    $judetNets[$r['judet']][] = (int)$r['net'];
+}
+$byJudet = [];
+foreach ($judetNets as $j => $nets) {
+    $byJudet[] = [
+        'judet' => $j,
+        'count' => count($nets),
+        'median_net' => (int)round(median($nets)),
     ];
-}, $judetRows);
+}
+usort($byJudet, fn($a, $b) => $b['median_net'] <=> $a['median_net']);
 
-// Distribution by domeniu (global)
+// Distribution by domeniu — same median-per-bucket approach as by_judet.
 [$byDomWhere, $byDomParams] = $buildFilters();
 $domStmt = $pdo->prepare(
-    "SELECT s.domeniu,
-            COUNT(DISTINCT s.id) AS n,
-            AVG(sub.total_asset - sub.total_datorii) AS avg_net,
-            AVG(NULLIF(sub.total_datorii, 0)) AS avg_datorii,
-            AVG(NULLIF(sub.total_asset, 0))   AS avg_asset
+    "SELECT s.domeniu, (sub.total_asset - sub.total_datorii) AS net
      FROM submissions s
      INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
      INNER JOIN (
@@ -274,36 +270,27 @@ $domStmt = $pdo->prepare(
                 SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
          FROM entries WHERE status = 1 GROUP BY submission_id
      ) sub ON sub.submission_id = s.id
-     WHERE s.domeniu IS NOT NULL AND s.domeniu != '' AND s.deleted_at IS NULL AND s.is_spam = 0 $byDomWhere
-     GROUP BY s.domeniu
-     HAVING n >= 1
-     ORDER BY avg_net DESC"
+     WHERE s.domeniu IS NOT NULL AND s.domeniu != '' AND s.deleted_at IS NULL AND s.is_spam = 0 $byDomWhere"
 );
 $domStmt->execute($byDomParams);
-$domeniuRows = $domStmt->fetchAll();
-
-$byDomeniu = array_map(function ($r) {
-    return [
-        'domeniu' => $r['domeniu'],
-        'count' => (int)$r['n'],
-        'avg_net' => (int)round((float)$r['avg_net']),
-        'avg_datorii' => (int)round((float)$r['avg_datorii']),
-        'avg_asset' => (int)round((float)$r['avg_asset']),
+$domNets = [];
+foreach ($domStmt as $r) {
+    $domNets[$r['domeniu']][] = (int)$r['net'];
+}
+$byDomeniu = [];
+foreach ($domNets as $d => $nets) {
+    $byDomeniu[] = [
+        'domeniu' => $d,
+        'count' => count($nets),
+        'median_net' => (int)round(median($nets)),
     ];
-}, $domeniuRows);
+}
+usort($byDomeniu, fn($a, $b) => $b['median_net'] <=> $a['median_net']);
 
-// Distribution by persoane_intretinere (bucketed 0,1,2,3,4+)
+// Distribution by persoane_intretinere — bucketed 0,1,2,3,4+ with median net.
 [$byPIWhere, $byPIParams] = $buildFilters();
 $piStmt = $pdo->prepare(
-    "SELECT
-        CASE
-            WHEN s.persoane_intretinere >= 4 THEN '4+'
-            ELSE CAST(s.persoane_intretinere AS CHAR)
-        END AS bucket,
-        COUNT(DISTINCT s.id) AS n,
-        AVG(sub.total_asset - sub.total_datorii) AS avg_net,
-        AVG(sub.total_datorii) AS avg_datorii,
-        AVG(sub.total_asset)   AS avg_asset
+    "SELECT s.persoane_intretinere AS pi, (sub.total_asset - sub.total_datorii) AS net
      FROM submissions s
      INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
      INNER JOIN (
@@ -312,22 +299,25 @@ $piStmt = $pdo->prepare(
                 SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
          FROM entries WHERE status = 1 GROUP BY submission_id
      ) sub ON sub.submission_id = s.id
-     WHERE s.persoane_intretinere IS NOT NULL AND s.deleted_at IS NULL AND s.is_spam = 0 $byPIWhere
-     GROUP BY bucket
-     ORDER BY CASE bucket WHEN '0' THEN 0 WHEN '1' THEN 1 WHEN '2' THEN 2 WHEN '3' THEN 3 WHEN '4+' THEN 4 END"
+     WHERE s.persoane_intretinere IS NOT NULL AND s.deleted_at IS NULL AND s.is_spam = 0 $byPIWhere"
 );
 $piStmt->execute($byPIParams);
-$piRows = $piStmt->fetchAll();
-
-$byPI = array_map(function ($r) {
-    return [
-        'bucket' => $r['bucket'],
-        'count' => (int)$r['n'],
-        'avg_net' => (int)round((float)$r['avg_net']),
-        'avg_datorii' => (int)round((float)$r['avg_datorii']),
-        'avg_asset' => (int)round((float)$r['avg_asset']),
+$piNets = [];
+foreach ($piStmt as $r) {
+    $pi = (int)$r['pi'];
+    $bucket = $pi >= 4 ? '4+' : (string)$pi;
+    $piNets[$bucket][] = (int)$r['net'];
+}
+$bucketOrder = ['0' => 0, '1' => 1, '2' => 2, '3' => 3, '4+' => 4];
+$byPI = [];
+foreach ($piNets as $bucket => $nets) {
+    $byPI[] = [
+        'bucket' => $bucket,
+        'count' => count($nets),
+        'median_net' => (int)round(median($nets)),
     ];
-}, $piRows);
+}
+usort($byPI, fn($a, $b) => ($bucketOrder[$a['bucket']] ?? 99) <=> ($bucketOrder[$b['bucket']] ?? 99));
 
 // Optimism correlation
 [$optWhere, $optParams] = $buildFilters();
