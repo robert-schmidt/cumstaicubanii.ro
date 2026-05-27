@@ -68,15 +68,15 @@ export default function DashboardPage({ uuid, sid }) {
         </Card>
       </section>
 
-      <Card title="Net worth mediu pe județ">
+      <Card title="Net worth median pe județ">
         <JudetList rows={by_judet} userJudet={filters.judet || (user && user.judet) || null} />
       </Card>
 
-      <Card title="Net worth mediu pe domeniu ocupațional">
+      <Card title="Net worth median pe domeniu ocupațional">
         <DomeniuList rows={by_domeniu} />
       </Card>
 
-      <Card title="Net worth mediu după persoane în întreținere">
+      <Card title="Net worth median după persoane în întreținere">
         <PersoaneStats rows={by_persoane_intretinere} />
       </Card>
 
@@ -330,13 +330,13 @@ function PieBlock({ data, palette }) {
 }
 
 function JudetList({ rows, userJudet }) {
-  const sorted = useMemo(() => [...rows].sort((a, b) => b.avg_net - a.avg_net), [rows]);
-  const max = Math.max(1, ...sorted.map(r => Math.abs(r.avg_net)));
+  const sorted = useMemo(() => [...rows].sort((a, b) => b.median_net - a.median_net), [rows]);
+  const max = Math.max(1, ...sorted.map(r => Math.abs(r.median_net)));
   if (!sorted.length) return <p className="text-sm text-slate-500">Fără date.</p>;
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
       {sorted.map(r => {
-        const pct = (Math.abs(r.avg_net) / max) * 100;
+        const pct = (Math.abs(r.median_net) / max) * 100;
         const isUser = userJudet && r.judet === userJudet;
         return (
           <div key={r.judet} className={'flex items-center gap-3 py-1 ' + (isUser ? 'bg-amber-50 -mx-2 px-2 rounded' : '')}>
@@ -344,9 +344,9 @@ function JudetList({ rows, userJudet }) {
               {r.judet}{isUser && ' ★'}
             </span>
             <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
-              <div className={'h-full ' + (r.avg_net >= 0 ? 'bg-emerald-500' : 'bg-rose-500')} style={{ width: pct + '%' }} />
+              <div className={'h-full ' + (r.median_net >= 0 ? 'bg-emerald-500' : 'bg-rose-500')} style={{ width: pct + '%' }} />
             </div>
-            <span className="w-28 text-right text-sm text-slate-600">{formatRon(r.avg_net)}</span>
+            <span className="w-28 text-right text-sm text-slate-600">{formatRon(r.median_net)}</span>
             <span className="w-10 text-right text-xs text-slate-400">n={r.count}</span>
           </div>
         );
@@ -405,18 +405,18 @@ function TypeBars({ data, color, userByType }) {
 
 function DomeniuList({ rows }) {
   if (!rows || !rows.length) return <p className="text-sm text-slate-500">Fără date.</p>;
-  const max = Math.max(1, ...rows.map(r => Math.abs(r.avg_net)));
+  const max = Math.max(1, ...rows.map(r => Math.abs(r.median_net)));
   return (
     <div className="space-y-1.5">
       {rows.map(r => {
-        const pct = (Math.abs(r.avg_net) / max) * 100;
+        const pct = (Math.abs(r.median_net) / max) * 100;
         return (
           <div key={r.domeniu} className="flex items-center gap-3 py-1">
             <span className="w-40 text-sm text-slate-700 truncate" title={r.domeniu}>{r.domeniu}</span>
             <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
-              <div className={'h-full ' + (r.avg_net >= 0 ? 'bg-emerald-500' : 'bg-rose-500')} style={{ width: pct + '%' }} />
+              <div className={'h-full ' + (r.median_net >= 0 ? 'bg-emerald-500' : 'bg-rose-500')} style={{ width: pct + '%' }} />
             </div>
-            <span className="w-28 text-right text-sm text-slate-600">{formatRon(r.avg_net)}</span>
+            <span className="w-28 text-right text-sm text-slate-600">{formatRon(r.median_net)}</span>
             <span className="w-10 text-right text-xs text-slate-400">n={r.count}</span>
           </div>
         );
@@ -593,6 +593,10 @@ const FAQ_ITEMS = [
     a: 'Strict atât de corecte cât și-au dorit utilizatorii să fie. Avem un sistem automat care marchează valorile evident exagerate (peste 5× mediana pe tip) și un proces manual de moderare în spate. Nu putem însă filtra minciuna în limite plauzibile — câteva sume umflate dispar în mulțime, cu cât sunt mai multe răspunsuri cu atât distorsiunea se diluează.',
   },
   {
+    q: 'De ce folosiți mediana și nu media?',
+    a: 'Există o glumă veche printre statisticieni: când Bill Gates intră într-un bar, în medie toți cei dinăuntru devin miliardari — dar mediana nu se clintește, nimeni n-a câștigat în realitate nimic. Asta e problema mediei: o singură valoare extremă o trage în sus și ascunde realitatea. Dacă într-un grup de 10 oameni unul declară 10 milioane RON și restul câte 50.000, media iese ~1 milion — o cifră în care nu se regăsește nimeni. Mediana e valoarea de la mijloc când îi pui pe toți în ordine: jumătate au mai puțin, jumătate au mai mult. E utilizatorul „tipic", mult mai aproape de ce ai întâlni dacă întrebi un om la întâmplare. Pentru date financiare, unde câțiva oameni cu averi mari (sau câteva sume umflate) pot să tragă media în sus, mediana e singura cifră onestă.',
+  },
+  {
     q: 'De ce nu validați prin email sau SMS?',
     a: 'Ținem anonimitatea sus de tot. Un email confirmat n-ar face datele mai veridice — știi cât de parșivi, persuasivi și ostentativi au devenit brokerii de credite? În plus, ne-ar îngreuna și share-uitul rezultatelor.',
   },
@@ -642,12 +646,12 @@ function FAQ() {
 
 function PersoaneStats({ rows }) {
   if (!rows || !rows.length) return <p className="text-sm text-slate-500">Fără date.</p>;
-  const max = Math.max(1, ...rows.map(r => Math.abs(r.avg_net)));
+  const max = Math.max(1, ...rows.map(r => Math.abs(r.median_net)));
   return (
     <div className="space-y-3">
       {rows.map(r => {
-        const pct = (Math.abs(r.avg_net) / max) * 100;
-        const negative = r.avg_net < 0;
+        const pct = (Math.abs(r.median_net) / max) * 100;
+        const negative = r.median_net < 0;
         return (
           <div key={r.bucket}>
             <div className="flex items-baseline justify-between text-sm mb-1">
@@ -658,7 +662,7 @@ function PersoaneStats({ rows }) {
                   : `${r.bucket} persoane`}
               </span>
               <span>
-                <span className={'font-semibold ' + (negative ? 'text-rose-600' : 'text-emerald-600')}>{formatRon(r.avg_net)}</span>
+                <span className={'font-semibold ' + (negative ? 'text-rose-600' : 'text-emerald-600')}>{formatRon(r.median_net)}</span>
                 <span className="ml-2 text-xs text-slate-400">n={r.count}</span>
               </span>
             </div>
