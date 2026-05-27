@@ -140,9 +140,10 @@ export default function FormPage({ uuid }) {
       }
     }
 
-    const domeniu = demo.domeniu === 'Altele' && demo.domeniuOther.trim()
+    const domeniu = demo.domeniu || null;
+    const domeniuOther = demo.domeniu === 'Altele' && demo.domeniuOther.trim()
       ? demo.domeniuOther.trim()
-      : (demo.domeniu || null);
+      : null;
 
     // Detect "✨ Date exemplu was clicked and nothing was touched after". If true,
     // the backend stores entries with status=0 so this stale sample doesn't
@@ -167,6 +168,7 @@ export default function FormPage({ uuid }) {
       sex: demo.sex || null,
       persoane_intretinere: demo.persoane_intretinere !== '' ? Number(demo.persoane_intretinere) : null,
       domeniu,
+      domeniu_other: domeniuOther,
       entries,
       is_sample: isUntouchedSample,
     };
