@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Outlet, Link, useLocation } from 'react-router-dom';
+import { Outlet, Link, NavLink, useLocation } from 'react-router-dom';
 import { hasSubmitted, resetSubmission, getSid, onAuthChange } from './lib/identity.js';
 
 function readAuth() {
@@ -51,6 +51,17 @@ export default function App() {
           <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
             <p>Nu colectăm date personale identificabile. Toate informațiile sunt anonime și agregate.</p>
             <div className="flex items-center gap-4">
+              <NavLink
+                to="/feedback"
+                className={({ isActive }) =>
+                  'inline-flex items-center gap-1.5 transition ' +
+                  (isActive ? 'text-slate-900 font-medium' : 'text-slate-500 hover:text-emerald-700')
+                }
+                title="Verifică datele comunității"
+              >
+                <span aria-hidden="true">🔍</span>
+                <span>Verifică datele</span>
+              </NavLink>
               <a
                 href="https://buymeacoffee.com/robbschmidt"
                 target="_blank"

@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import { fetchStats } from '../lib/api.js';
 import { formatRon, formatNumber } from '../lib/format.js';
+import FAQ from '../components/FAQ.jsx';
 
 const DEBT_PALETTE = ['#ef4444', '#f97316', '#f59e0b', '#dc2626', '#b91c1c', '#9a3412'];
 const ASSET_PALETTE = ['#10b981', '#14b8a6', '#0ea5e9', '#22c55e', '#059669', '#0d9488', '#3b82f6'];
@@ -329,24 +330,50 @@ function PieBlock({ data, palette }) {
   );
 }
 
+// A single response in a county / domeniu group is statistical noise — one
+// outlier salary would dominate the chart. Demote those buckets to the
+// bottom with a grey bar so the list still surfaces their existence, just
+// without ranking them against meaningful samples.
+const MIN_SAMPLE = 2;
+
 function JudetList({ rows, userJudet }) {
-  const sorted = useMemo(() => [...rows].sort((a, b) => b.median_net - a.median_net), [rows]);
-  const max = Math.max(1, ...sorted.map(r => Math.abs(r.median_net)));
+  const { sorted, max } = useMemo(() => {
+    const hi = rows.filter(r => r.count >= MIN_SAMPLE);
+    const lo = rows.filter(r => r.count <  MIN_SAMPLE);
+    hi.sort((a, b) => b.median_net - a.median_net);
+    lo.sort((a, b) => a.judet.localeCompare(b.judet));
+    return {
+      sorted: [...hi, ...lo],
+      max: Math.max(1, ...hi.map(r => Math.abs(r.median_net))),
+    };
+  }, [rows]);
   if (!sorted.length) return <p className="text-sm text-slate-500">Fără date.</p>;
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
       {sorted.map(r => {
-        const pct = (Math.abs(r.median_net) / max) * 100;
+        const thin = r.count < MIN_SAMPLE;
+        const pct = Math.min(100, (Math.abs(r.median_net) / max) * 100);
         const isUser = userJudet && r.judet === userJudet;
+        const barCls = thin
+          ? 'bg-slate-300'
+          : (r.median_net >= 0 ? 'bg-emerald-500' : 'bg-rose-500');
+        const labelCls = isUser
+          ? 'font-semibold text-amber-900'
+          : (thin ? 'text-slate-400' : 'text-slate-700');
+        const valueCls = thin ? 'text-slate-400' : 'text-slate-600';
         return (
-          <div key={r.judet} className={'flex items-center gap-3 py-1 ' + (isUser ? 'bg-amber-50 -mx-2 px-2 rounded' : '')}>
-            <span className={'w-28 text-sm truncate ' + (isUser ? 'font-semibold text-amber-900' : 'text-slate-700')}>
+          <div
+            key={r.judet}
+            className={'flex items-center gap-3 py-1 ' + (isUser ? 'bg-amber-50 -mx-2 px-2 rounded' : '')}
+            title={thin ? `Doar ${r.count} răspuns — date insuficiente, rangul nu e relevant.` : undefined}
+          >
+            <span className={'w-28 text-sm truncate ' + labelCls}>
               {r.judet}{isUser && ' ★'}
             </span>
             <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
-              <div className={'h-full ' + (r.median_net >= 0 ? 'bg-emerald-500' : 'bg-rose-500')} style={{ width: pct + '%' }} />
+              <div className={'h-full ' + barCls} style={{ width: pct + '%' }} />
             </div>
-            <span className="w-28 text-right text-sm text-slate-600">{formatRon(r.median_net)}</span>
+            <span className={'w-28 text-right text-sm ' + valueCls}>{formatRon(r.median_net)}</span>
             <span className="w-10 text-right text-xs text-slate-400">n={r.count}</span>
           </div>
         );
@@ -404,19 +431,37 @@ function TypeBars({ data, color, userByType }) {
 }
 
 function DomeniuList({ rows }) {
-  if (!rows || !rows.length) return <p className="text-sm text-slate-500">Fără date.</p>;
-  const max = Math.max(1, ...rows.map(r => Math.abs(r.median_net)));
+  const { sorted, max } = useMemo(() => {
+    if (!rows) return { sorted: [], max: 1 };
+    const hi = rows.filter(r => r.count >= MIN_SAMPLE);
+    const lo = rows.filter(r => r.count <  MIN_SAMPLE);
+    hi.sort((a, b) => b.median_net - a.median_net);
+    lo.sort((a, b) => a.domeniu.localeCompare(b.domeniu));
+    return {
+      sorted: [...hi, ...lo],
+      max: Math.max(1, ...hi.map(r => Math.abs(r.median_net))),
+    };
+  }, [rows]);
+  if (!sorted.length) return <p className="text-sm text-slate-500">Fără date.</p>;
   return (
     <div className="space-y-1.5">
-      {rows.map(r => {
-        const pct = (Math.abs(r.median_net) / max) * 100;
+      {sorted.map(r => {
+        const thin = r.count < MIN_SAMPLE;
+        const pct = Math.min(100, (Math.abs(r.median_net) / max) * 100);
+        const barCls = thin
+          ? 'bg-slate-300'
+          : (r.median_net >= 0 ? 'bg-emerald-500' : 'bg-rose-500');
         return (
-          <div key={r.domeniu} className="flex items-center gap-3 py-1">
-            <span className="w-40 text-sm text-slate-700 truncate" title={r.domeniu}>{r.domeniu}</span>
+          <div
+            key={r.domeniu}
+            className="flex items-center gap-3 py-1"
+            title={thin ? `Doar ${r.count} răspuns — date insuficiente, rangul nu e relevant.` : undefined}
+          >
+            <span className={'w-40 text-sm truncate ' + (thin ? 'text-slate-400' : 'text-slate-700')} title={r.domeniu}>{r.domeniu}</span>
             <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
-              <div className={'h-full ' + (r.median_net >= 0 ? 'bg-emerald-500' : 'bg-rose-500')} style={{ width: pct + '%' }} />
+              <div className={'h-full ' + barCls} style={{ width: pct + '%' }} />
             </div>
-            <span className="w-28 text-right text-sm text-slate-600">{formatRon(r.median_net)}</span>
+            <span className={'w-28 text-right text-sm ' + (thin ? 'text-slate-400' : 'text-slate-600')}>{formatRon(r.median_net)}</span>
             <span className="w-10 text-right text-xs text-slate-400">n={r.count}</span>
           </div>
         );
@@ -448,32 +493,62 @@ function ShareCard({ user }) {
   const canNativeShare = isTouchViewport && typeof navigator !== 'undefined' && typeof navigator.share === 'function';
   // Share message reflects the user's ABSOLUTE position vs the whole population —
   // it ignores any dashboard filter (county/sex/age) the user happens to have
-  // toggled. Clamp to ≥ 1: a percentile of 100 would render as "top 0%" which
-  // is nonsense.
+  // toggled.
+  //
+  // "Top X%" phrasing only genuinely flatters when X is small AND the metric
+  // points the right way: high net_worth and high asset-uri are good; low
+  // datorii is good. For a user who is below median on a dimension (e.g.
+  // negative net worth ranks around percentile 46), the old code rendered
+  // "top 54% ca net worth" — mathematically true but semantically misleading,
+  // since "top 54%" sounds like an achievement when the user is in the lower
+  // middle of the distribution.
+  //
+  // The dashboard's PercentileCard already applies the right gate ("Sub medie"
+  // when pct < 50). We mirror that here: include a dimension only when it
+  // actually flatters, else drop it. If nothing flatters, fall back to a
+  // neutral message rather than fabricating a brag.
   const pctD = user.percentile_datorii_global   ?? user.percentile_datorii;
   const pctA = user.percentile_asset_global     ?? user.percentile_asset;
   const pctN = user.percentile_net_worth_global ?? user.percentile_net_worth;
-  // A user with no datorii (or no asset-uri) has percentile=0 by backend
-  // convention; rendering that as "top 100%" is nonsense, so we drop the
-  // segment from the share message and from the share URL.
   const hasDatorii = (user.total_datorii ?? 0) > 0;
   const hasAsset   = (user.total_asset   ?? 0) > 0;
-  const tD = hasDatorii ? Math.max(1, Math.round(100 - pctD)) : null;
-  const tA = hasAsset   ? Math.max(1, Math.round(100 - pctA)) : null;
-  const tN = Math.max(1, Math.round(100 - pctN));
+
+  const flatN = pctN >= 50;
+  const flatA = hasAsset   && pctA >= 50;
+  const flatD = hasDatorii && pctD <= 50; // less debt than median = brag-worthy
+
+  // All three formulas are still tX = 100 - pct, which equals "% of the
+  // population the user is better than" on each axis (after we invert for
+  // datorii since lower-debt = better). Clamp to ≥ 1 so a 100th-percentile
+  // user doesn't render as "top 0%".
+  const tN = flatN ? Math.max(1, Math.round(100 - pctN)) : null;
+  const tA = flatA ? Math.max(1, Math.round(100 - pctA)) : null;
+  const tD = flatD ? Math.max(1, Math.round(100 - pctD)) : null;
+
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   // Personalized share URL — backend renders OG meta tags from these params so
-  // FB / LinkedIn previews actually show the user's stats.
+  // FB / LinkedIn previews actually show the user's stats. Only include each
+  // param when the corresponding line is in the share text.
   const shareParams = new URLSearchParams();
   if (tD !== null) shareParams.set('d', String(tD));
   if (tA !== null) shareParams.set('v', String(tA));
-  shareParams.set('n', String(tN));
-  const shareUrl = `${origin}/share?${shareParams.toString()}`;
+  if (tN !== null) shareParams.set('n', String(tN));
+  const sp = shareParams.toString();
+  // Nothing flatters → share the homepage instead of a personalized /share
+  // URL whose OG would also fall back to generic anyway. Cleaner link.
+  const shareUrl = sp ? `${origin}/share?${sp}` : `${origin}/`;
+
   const segments = [];
-  if (tD !== null) segments.push(`top ${tD}% ca datorii`);
+  if (tN !== null) segments.push(`top ${tN}% ca net worth`);
   if (tA !== null) segments.push(`top ${tA}% ca asset-uri`);
-  segments.push(`top ${tN}% ca net worth`);
-  const message = `💰 Mă situez în ${segments.join(', ')}. Tu cum stai cu banii? Află aici →`;
+  // For datorii, "top X%" with small X sounds like "debt-elite", which is a
+  // weird brag. Phrase it explicitly as "datorii mai mici decât X% dintre
+  // utilizatori" — only included when X ≥ 50 (per flatD gate above).
+  if (tD !== null) segments.push(`datorii mai mici decât ${tD}% dintre utilizatori`);
+
+  const message = segments.length > 0
+    ? `💰 Mă situez în ${segments.join(', ')}. Tu cum stai cu banii? Află aici →`
+    : `📊 Am verificat unde mă plasez față de media României. Tu cum stai cu banii? Află aici →`;
   const full = `${message} ${shareUrl}`;
 
   const enc = encodeURIComponent;
@@ -587,89 +662,43 @@ function ShareBtnButton({ onClick, label, bg, hover, children }) {
   );
 }
 
-const FAQ_ITEMS = [
-  {
-    q: 'Cât de corecte / valide sunt datele de pe site?',
-    a: 'Strict atât de corecte cât și-au dorit utilizatorii să fie. Avem un sistem automat care marchează valorile evident exagerate (peste 5× mediana pe tip) și un proces manual de moderare în spate. Nu putem însă filtra minciuna în limite plauzibile — câteva sume umflate dispar în mulțime, cu cât sunt mai multe răspunsuri cu atât distorsiunea se diluează.',
-  },
-  {
-    q: 'De ce folosiți mediana și nu media?',
-    a: 'Există o glumă veche printre statisticieni: când Bill Gates intră într-un bar, în medie toți cei dinăuntru devin miliardari — dar mediana nu se clintește, nimeni n-a câștigat în realitate nimic. Asta e problema mediei: o singură valoare extremă o trage în sus și ascunde realitatea. Dacă într-un grup de 10 oameni unul declară 10 milioane RON și restul câte 50.000, media iese ~1 milion — o cifră în care nu se regăsește nimeni. Mediana e valoarea de la mijloc când îi pui pe toți în ordine: jumătate au mai puțin, jumătate au mai mult. E utilizatorul „tipic", mult mai aproape de ce ai întâlni dacă întrebi un om la întâmplare. Pentru date financiare, unde câțiva oameni cu averi mari (sau câteva sume umflate) pot să tragă media în sus, mediana e singura cifră onestă.',
-  },
-  {
-    q: 'De ce nu validați prin email sau SMS?',
-    a: 'Ținem anonimitatea sus de tot. Un email confirmat n-ar face datele mai veridice — știi cât de parșivi, persuasivi și ostentativi au devenit brokerii de credite? În plus, ne-ar îngreuna și share-uitul rezultatelor.',
-  },
-  {
-    q: 'Bun, dar de ce există site-ul ăsta?',
-    a: 'Pentru că m-am pus într-o seară să-mi calculez datoriile totale și mi-a ieșit ~130k EUR. Mi-a venit să întreb: cum li se pare altora suma asta? Alții cât au? Așa a apărut tot ce vezi aici.',
-  },
-  {
-    q: 'Ce înseamnă "asset" mai exact?',
-    a: 'Orice bun care poate fi convertit relativ ușor în bani: depozite, imobile, terenuri, acțiuni, crypto, bunuri de valoare. NU e asset venitul recurent (salariu, pensie) — acela e un flux, nu un stoc de avere.',
-  },
-  {
-    q: 'Ce e codul de sesiune din colțul de jos?',
-    a: 'E un cod scurt (8 caractere, fără 0/1/o/l/i ca să fie ușor de citit) generat pentru tine la submit. Cu el te poți întoarce pe dashboard de pe alt dispozitiv sau după ce ștergi cookies. Click pe el → se copiază în clipboard.',
-  },
-  {
-    q: 'Cine vede datele mele?',
-    a: 'Doar tu, prin codul tău de sesiune. Restul lumii vede doar agregate — medii, mediane, distribuții. Nu se expun rânduri individuale. Codul nu e legat de email, nume, IP — nici eu, ca admin, nu pot urmări înapoi cine ești.',
-  },
-];
-
-function FAQ() {
-  return (
-    <div className="space-y-2">
-      {FAQ_ITEMS.map((item, i) => (
-        <details
-          key={i}
-          className="group rounded-xl border border-slate-200 bg-white open:bg-slate-50/50 transition"
-        >
-          <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between gap-3 text-sm font-medium text-slate-800 select-none">
-            <span>{item.q}</span>
-            <svg
-              width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true"
-              className="text-slate-400 shrink-0 transition-transform group-open:rotate-180"
-            >
-              <path d="M5 8l5 5 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </summary>
-          <p className="px-4 pb-4 text-sm text-slate-600 leading-relaxed">
-            {item.a}
-          </p>
-        </details>
-      ))}
-    </div>
-  );
-}
 
 function PersoaneStats({ rows }) {
   if (!rows || !rows.length) return <p className="text-sm text-slate-500">Fără date.</p>;
-  const max = Math.max(1, ...rows.map(r => Math.abs(r.median_net)));
+  // Keep the natural 0 → 4+ bucket order (the backend already returns it
+  // sorted that way). Scale bar widths against high-n buckets only so a
+  // single-respondent bucket doesn't squish the rest.
+  const max = Math.max(1, ...rows.filter(r => r.count >= MIN_SAMPLE).map(r => Math.abs(r.median_net)));
   return (
     <div className="space-y-3">
       {rows.map(r => {
-        const pct = (Math.abs(r.median_net) / max) * 100;
+        const thin = r.count < MIN_SAMPLE;
+        const pct = Math.min(100, (Math.abs(r.median_net) / max) * 100);
         const negative = r.median_net < 0;
+        const barCls = thin
+          ? 'bg-slate-300'
+          : (negative ? 'bg-rose-500' : 'bg-emerald-500');
+        const valueCls = thin
+          ? 'text-slate-400'
+          : (negative ? 'text-rose-600' : 'text-emerald-600');
         return (
-          <div key={r.bucket}>
+          <div key={r.bucket} title={thin ? `Doar ${r.count} răspuns — date insuficiente.` : undefined}>
             <div className="flex items-baseline justify-between text-sm mb-1">
-              <span className="font-medium text-slate-800">
+              <span className={'font-medium ' + (thin ? 'text-slate-400' : 'text-slate-800')}>
                 {r.bucket === '0' ? 'Fără persoane în întreținere'
                   : r.bucket === '1' ? '1 persoană'
                   : r.bucket === '4+' ? '4 sau mai multe persoane'
                   : `${r.bucket} persoane`}
               </span>
               <span>
-                <span className={'font-semibold ' + (negative ? 'text-rose-600' : 'text-emerald-600')}>{formatRon(r.median_net)}</span>
+                <span className={'font-semibold ' + valueCls}>{formatRon(r.median_net)}</span>
                 <span className="ml-2 text-xs text-slate-400">n={r.count}</span>
               </span>
             </div>
             <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden">
               <motion.div
                 initial={{ width: 0 }} animate={{ width: pct + '%' }} transition={{ duration: 0.6 }}
-                className={'h-full rounded-full ' + (negative ? 'bg-rose-500' : 'bg-emerald-500')}
+                className={'h-full rounded-full ' + barCls}
               />
             </div>
           </div>
