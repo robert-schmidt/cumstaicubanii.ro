@@ -17,17 +17,21 @@ $n = isset($_GET['n']) && is_numeric($_GET['n']) ? max(0, min(100, (int)$_GET['n
 $siteUrl  = 'https://cumstaicubanii.ro';
 $imageUrl = $siteUrl . '/og-image.png';
 
-// Net worth is always present once a submission exists; datorii / asset can be
-// missing if the user didn't report that side. Build a personalized OG as long
-// as net worth is present, with whichever subset of {datorii, asset} was sent.
-if ($n !== null) {
-    $titleParts = ["Top {$n}% net worth"];
-    $descParts  = [];
-    $urlParts   = [];
-    if ($v !== null) { $titleParts[] = "Top {$v}% asset-uri"; $descParts[] = "top {$v}% ca asset-uri"; $urlParts[] = "v={$v}"; }
-    if ($d !== null) { $titleParts[] = "Top {$d}% datorii";   $descParts[] = "top {$d}% ca datorii";   $urlParts[] = "d={$d}"; }
-    $descParts[] = "top {$n}% ca net worth";
-    $urlParts[]  = "n={$n}";
+// Frontend now omits any dimension that's below median (would sound like a
+// brag about a sub-median result). So {n, v, d} may each independently be
+// absent — render whichever ones are present, fall back to generic OG only
+// when ALL three are absent. The datorii line is phrased "datorii mai mici
+// decât X% dintre utilizatori" so direction is unambiguous; X comes from
+// the same `d` param the frontend writes (the % of debtors who have MORE
+// debt than the sharer).
+$titleParts = [];
+$descParts  = [];
+$urlParts   = [];
+if ($n !== null) { $titleParts[] = "Top {$n}% net worth";     $descParts[] = "top {$n}% ca net worth";                          $urlParts[] = "n={$n}"; }
+if ($v !== null) { $titleParts[] = "Top {$v}% asset-uri";     $descParts[] = "top {$v}% ca asset-uri";                          $urlParts[] = "v={$v}"; }
+if ($d !== null) { $titleParts[] = "Datorii sub {$d}% din populație"; $descParts[] = "datorii mai mici decât {$d}% dintre utilizatori"; $urlParts[] = "d={$d}"; }
+
+if (!empty($titleParts)) {
     $title       = implode(' · ', $titleParts) . ' — cumstaicubanii.ro';
     $description = '💰 Mă situez în ' . implode(', ', $descParts) . '. Tu cum stai cu banii?';
     $shareUrl    = "{$siteUrl}/share?" . implode('&', $urlParts);

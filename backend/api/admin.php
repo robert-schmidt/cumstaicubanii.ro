@@ -80,7 +80,19 @@ if ($method === 'POST' && in_array($action, ['toggle', 'bulk_approve', 'bulk_dis
     } elseif ($action === 'toggle_spam') {
         $sid = (int)($_POST['submission_id'] ?? 0);
         if ($sid > 0) {
-            $pdo->prepare('UPDATE submissions SET is_spam = 1 - is_spam WHERE id = ?')->execute([$sid]);
+            // Read current state, then flip. If we're marking as spam, also
+            // disable every entry on the submission (same effect as clicking
+            // "Disable all") so the rose flag-state is consistent with the
+            // spam decision. Unmarking spam does NOT auto-approve entries —
+            // prior moderation decisions (manual approves/disables) must
+            // stand, otherwise we'd silently undo admin work.
+            $stmt = $pdo->prepare('SELECT is_spam FROM submissions WHERE id = ?');
+            $stmt->execute([$sid]);
+            $newSpam = 1 - (int)$stmt->fetchColumn();
+            $pdo->prepare('UPDATE submissions SET is_spam = ? WHERE id = ?')->execute([$newSpam, $sid]);
+            if ($newSpam === 1) {
+                $pdo->prepare('UPDATE entries SET status = 0 WHERE submission_id = ?')->execute([$sid]);
+            }
         }
     } else {
         $sid = (int)($_POST['submission_id'] ?? 0);
@@ -177,7 +189,7 @@ function admin_query_params(): array {
     if ($kind   !== '' && !in_array($kind, ['datorie', 'asset'], true)) $kind = '';
     if ($status !== '' && !in_array((string)$status, ['0', '1'], true)) $status = '';
     if ($spam   !== '' && !in_array((string)$spam,   ['0', '1'], true)) $spam = '';
-    if (!in_array($sort, ['recent', 'amount_desc', 'amount_asc'], true)) $sort = 'recent';
+    if (!in_array($sort, ['recent', 'amount_desc', 'amount_asc', 'community_flagged', 'community_validated'], true)) $sort = 'recent';
 
     // Admin sees non-deleted by default. Spam filter is opt-in (default shows
     // both spam and non-spam, so admin can spot patterns).
@@ -199,9 +211,11 @@ function admin_query_params(): array {
         $params[] = (int)$spam;
     }
 
-    if ($sort === 'amount_desc')      $order = 'ORDER BY (SELECT MAX(amount) FROM entries e WHERE e.submission_id = s.id) DESC, s.id DESC';
-    elseif ($sort === 'amount_asc')   $order = 'ORDER BY (SELECT MAX(amount) FROM entries e WHERE e.submission_id = s.id) ASC, s.id DESC';
-    else                              $order = 'ORDER BY s.id DESC';
+    if ($sort === 'amount_desc')              $order = 'ORDER BY (SELECT MAX(amount) FROM entries e WHERE e.submission_id = s.id) DESC, s.id DESC';
+    elseif ($sort === 'amount_asc')           $order = 'ORDER BY (SELECT MAX(amount) FROM entries e WHERE e.submission_id = s.id) ASC, s.id DESC';
+    elseif ($sort === 'community_flagged')    $order = 'ORDER BY s.community_false_count DESC, s.id DESC';
+    elseif ($sort === 'community_validated')  $order = 'ORDER BY s.community_true_count  DESC, s.id DESC';
+    else                                      $order = 'ORDER BY s.id DESC';
 
     return [
         'kind'      => $kind,
@@ -220,7 +234,8 @@ function admin_query_params(): array {
 function admin_fetch_batch(PDO $pdo, array $q, int $offset, int $limit): array {
     $sStmt = $pdo->prepare(
         "SELECT s.id, s.uuid, s.session_id, s.created_at, s.judet, s.varsta,
-                s.sex, s.persoane_intretinere, s.domeniu, s.optimist, s.is_spam
+                s.sex, s.persoane_intretinere, s.domeniu, s.optimist, s.is_spam,
+                s.community_true_count, s.community_false_count
          FROM submissions s
          {$q['whereSql']}
          {$q['orderSql']}
@@ -327,9 +342,11 @@ HTML;
     $statusOpts = render_options(['' => 'Toate', '1' => 'aprobate', '0' => 'flagged'], (string)$q['status']);
     $spamOpts   = render_options(['' => 'Toate', '0' => 'non-spam', '1' => '🚫 doar spam'], (string)$q['spam']);
     $sortOpts   = render_options([
-        'recent'      => 'Cele mai recente',
-        'amount_desc' => 'Suma (mare → mică)',
-        'amount_asc'  => 'Suma (mică → mare)',
+        'recent'              => 'Cele mai recente',
+        'amount_desc'         => 'Suma (mare → mică)',
+        'amount_asc'          => 'Suma (mică → mare)',
+        'community_flagged'   => '✗ Cele mai semnalate (comunitate)',
+        'community_validated' => '✓ Cele mai validate (comunitate)',
     ], $q['sort']);
 
     $filters = <<<HTML
@@ -496,6 +513,15 @@ HTML;
     $spamBadge = $isSpam
         ? '<span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 font-semibold">🚫 SPAM</span>'
         : '';
+
+    $cTrue  = (int)($s['community_true_count']  ?? 0);
+    $cFalse = (int)($s['community_false_count'] ?? 0);
+    $commCls = $cFalse > $cTrue
+        ? 'bg-rose-50 text-rose-700 border-rose-200'
+        : ($cTrue > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-500 border-slate-200');
+    $commBadge = ($cTrue + $cFalse) > 0
+        ? "<span class=\"inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-mono tabular-nums {$commCls}\" title=\"Voturi comunitate: ▲ plauzibil / ▼ suspect\">▲{$cTrue} · ▼{$cFalse}</span>"
+        : '';
     $spamBtnLabel = $isSpam ? '✓ unmark spam' : '🚫 spam';
     $spamBtnCls   = $isSpam
         ? 'text-rose-700 border border-rose-300 bg-rose-50 hover:bg-rose-100'
@@ -509,6 +535,7 @@ HTML;
       <span class="text-xs text-slate-400">#{$sid}</span>
       <span class="font-mono text-sm text-slate-800">{$sessionId}</span>
       {$spamBadge}
+      {$commBadge}
       <span class="text-xs text-slate-500 truncate">{$judet} · {$varsta} · {$sex} · {$pi} · {$domeniu} · {$optimist}</span>
       <span class="text-xs text-slate-400 ml-auto">{$created}</span>
     </div>

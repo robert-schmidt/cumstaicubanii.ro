@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { fetchMeta, fetchStats, submitForm } from '../lib/api.js';
 import { markSubmitted, setSid, isValidSid, hasSubmitted, getSid } from '../lib/identity.js';
 import { formatInput, parseNumber, stripAmountChars, stripDigits, formatNumber } from '../lib/format.js';
+import FAQ from '../components/FAQ.jsx';
 
 const VARSTA_MIN = 14, VARSTA_MAX = 110;
 const PI_MIN = 0, PI_MAX = 20;
@@ -347,6 +348,11 @@ export default function FormPage({ uuid }) {
           </button>
         </div>
       </form>
+
+      <section className="mt-10 sm:mt-12">
+        <h2 className="text-lg font-semibold text-slate-900 mb-4">Întrebări frecvente</h2>
+        <FAQ />
+      </section>
     </div>
   );
 }

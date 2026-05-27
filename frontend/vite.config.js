@@ -15,6 +15,19 @@ export default defineConfig({
         target: apiTarget,
         changeOrigin: true,
       },
+      // Prod .htaccess rewrites /admin -> /api/admin.php. Mirror that in dev
+      // so the URL works at localhost:5173/admin too.
+      '/admin': {
+        target: apiTarget,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/admin/, '/api/admin.php'),
+      },
+      // Same trick for /share -> /api/share.php (the OG preview landing).
+      '/share': {
+        target: apiTarget,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/share/, '/api/share.php'),
+      },
     },
   },
 });
