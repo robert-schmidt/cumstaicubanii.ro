@@ -26,7 +26,10 @@ if (!preg_match('/^[0-9a-f-]{16,64}$/i', $uuid)) {
     json_response(['error' => 'Invalid uuid'], 400);
 }
 
-$optimist = !empty($body['optimist']) ? 1 : 0;
+if (!array_key_exists('optimist', $body) || !is_bool($body['optimist'])) {
+    json_response(['error' => 'Optimist invalid'], 400);
+}
+$optimist = $body['optimist'] ? 1 : 0;
 $isSample = !empty($body['is_sample']);
 
 $judet = $body['judet'] ?? null;
@@ -53,7 +56,18 @@ $domeniu = $body['domeniu'] ?? null;
 if ($domeniu !== null) {
     $domeniu = trim((string)$domeniu);
     if ($domeniu === '') $domeniu = null;
-    elseif (strlen($domeniu) > 80) $domeniu = substr($domeniu, 0, 80);
+    elseif (!in_array($domeniu, DOMENII, true)) json_response(['error' => 'Domeniu invalid'], 400);
+}
+// When user picks 'Altele', a custom free-text label travels in domeniu_other
+// and gets stored in place of 'Altele'. Strip control chars, trim, cap to the
+// VARCHAR(80) column width.
+if ($domeniu === 'Altele') {
+    $other = trim((string)($body['domeniu_other'] ?? ''));
+    if ($other !== '') {
+        $other = preg_replace('/[\x00-\x1F\x7F]/u', '', $other);
+        if (mb_strlen($other) > 80) $other = mb_substr($other, 0, 80);
+        if ($other !== '') $domeniu = $other;
+    }
 }
 
 $entries = $body['entries'] ?? [];

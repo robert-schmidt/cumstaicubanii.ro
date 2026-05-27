@@ -453,14 +453,27 @@ function ShareCard({ user }) {
   const pctD = user.percentile_datorii_global   ?? user.percentile_datorii;
   const pctA = user.percentile_asset_global     ?? user.percentile_asset;
   const pctN = user.percentile_net_worth_global ?? user.percentile_net_worth;
-  const tD = Math.max(1, Math.round(100 - pctD));
-  const tA = Math.max(1, Math.round(100 - pctA));
+  // A user with no datorii (or no asset-uri) has percentile=0 by backend
+  // convention; rendering that as "top 100%" is nonsense, so we drop the
+  // segment from the share message and from the share URL.
+  const hasDatorii = (user.total_datorii ?? 0) > 0;
+  const hasAsset   = (user.total_asset   ?? 0) > 0;
+  const tD = hasDatorii ? Math.max(1, Math.round(100 - pctD)) : null;
+  const tA = hasAsset   ? Math.max(1, Math.round(100 - pctA)) : null;
   const tN = Math.max(1, Math.round(100 - pctN));
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   // Personalized share URL — backend renders OG meta tags from these params so
   // FB / LinkedIn previews actually show the user's stats.
-  const shareUrl = `${origin}/share?d=${tD}&v=${tA}&n=${tN}`;
-  const message = `💰 Mă situez în top ${tD}% ca datorii, top ${tA}% ca asset-uri, top ${tN}% ca net worth. Tu cum stai cu banii? Află aici →`;
+  const shareParams = new URLSearchParams();
+  if (tD !== null) shareParams.set('d', String(tD));
+  if (tA !== null) shareParams.set('v', String(tA));
+  shareParams.set('n', String(tN));
+  const shareUrl = `${origin}/share?${shareParams.toString()}`;
+  const segments = [];
+  if (tD !== null) segments.push(`top ${tD}% ca datorii`);
+  if (tA !== null) segments.push(`top ${tA}% ca asset-uri`);
+  segments.push(`top ${tN}% ca net worth`);
+  const message = `💰 Mă situez în ${segments.join(', ')}. Tu cum stai cu banii? Află aici →`;
   const full = `${message} ${shareUrl}`;
 
   const enc = encodeURIComponent;

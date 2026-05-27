@@ -17,10 +17,20 @@ $n = isset($_GET['n']) && is_numeric($_GET['n']) ? max(0, min(100, (int)$_GET['n
 $siteUrl  = 'https://cumstaicubanii.ro';
 $imageUrl = $siteUrl . '/og-image.png';
 
-if ($d !== null && $v !== null && $n !== null) {
-    $title       = "Top {$n}% net worth · Top {$v}% asset-uri · Top {$d}% datorii — cumstaicubanii.ro";
-    $description = "💰 Mă situez în top {$d}% ca datorii, top {$v}% ca asset-uri, top {$n}% ca net worth. Tu cum stai cu banii?";
-    $shareUrl    = "{$siteUrl}/share?d={$d}&v={$v}&n={$n}";
+// Net worth is always present once a submission exists; datorii / asset can be
+// missing if the user didn't report that side. Build a personalized OG as long
+// as net worth is present, with whichever subset of {datorii, asset} was sent.
+if ($n !== null) {
+    $titleParts = ["Top {$n}% net worth"];
+    $descParts  = [];
+    $urlParts   = [];
+    if ($v !== null) { $titleParts[] = "Top {$v}% asset-uri"; $descParts[] = "top {$v}% ca asset-uri"; $urlParts[] = "v={$v}"; }
+    if ($d !== null) { $titleParts[] = "Top {$d}% datorii";   $descParts[] = "top {$d}% ca datorii";   $urlParts[] = "d={$d}"; }
+    $descParts[] = "top {$n}% ca net worth";
+    $urlParts[]  = "n={$n}";
+    $title       = implode(' · ', $titleParts) . ' — cumstaicubanii.ro';
+    $description = '💰 Mă situez în ' . implode(', ', $descParts) . '. Tu cum stai cu banii?';
+    $shareUrl    = "{$siteUrl}/share?" . implode('&', $urlParts);
 } else {
     $title       = 'Datorii vs Asset-uri — situația ta financiară, anonim · cumstaicubanii.ro';
     $description = 'Compară-te anonim cu media: datorii, asset-uri, net worth. Vezi în ce percentilă te afli.';
