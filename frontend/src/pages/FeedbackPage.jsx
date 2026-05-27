@@ -214,7 +214,6 @@ function SubmissionCard({ s, myVote, onVote }) {
     >
       <header className="bg-slate-50 px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-slate-200">
         <span className="text-xs text-slate-400">#{s.id}</span>
-        <span className="font-mono text-sm text-slate-800">{s.session_id || '—'}</span>
         <span className="text-xs text-slate-500 truncate">
           {(s.judet || '—')} · {s.varsta ? `${s.varsta} ani` : '—'} · {s.sex || '—'}
           {s.persoane_intretinere !== null ? ` · PI:${s.persoane_intretinere}` : ''}

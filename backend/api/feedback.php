@@ -95,8 +95,12 @@ function feedback_list(): void {
         $orderSql = 'ORDER BY s.id DESC';
     }
 
+    // Deliberately NOT selecting session_id — it's the credential a user
+    // would type into SidLogin to recover their dashboard, so exposing it on
+    // a public list is equivalent to publishing 8-char passwords. Admin
+    // panel needs it (it's authenticated); /feedback does not.
     $sStmt = $pdo->prepare(
-        "SELECT s.id, s.session_id, s.created_at, s.judet, s.varsta, s.sex,
+        "SELECT s.id, s.created_at, s.judet, s.varsta, s.sex,
                 s.persoane_intretinere, s.domeniu, s.optimist,
                 s.community_true_count, s.community_false_count
          FROM submissions s
@@ -146,7 +150,6 @@ function feedback_list(): void {
         $sid = (int)$s['id'];
         $out[] = [
             'id'                   => $sid,
-            'session_id'           => $s['session_id'],
             'created_at'           => $s['created_at'],
             'judet'                => $s['judet'],
             'varsta'               => $s['varsta'] !== null ? (int)$s['varsta'] : null,
