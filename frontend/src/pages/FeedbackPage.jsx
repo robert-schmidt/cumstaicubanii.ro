@@ -103,8 +103,7 @@ export default function FeedbackPage() {
         <p className="mt-2 text-sm text-slate-600 max-w-2xl">
           Votează fiecare snapshot: <strong>▲</strong> dacă suma datoriilor și
           asset-urilor pare plauzibilă, <strong>▼</strong> dacă pare exagerată
-          sau suspectă. Un vot per persoană, la fiecare 24h îți poți schimba
-          părerea.
+          sau suspectă. Un vot per persoană — poți schimba părerea oricând.
         </p>
       </motion.div>
 
