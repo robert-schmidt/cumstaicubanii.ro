@@ -15,6 +15,11 @@
 // per individual entry — because a snapshot is read holistically: if the
 // totals look implausible the whole submission is suspect, and asking the
 // voter to flag entries one-by-one is more friction than signal.
+//
+// A voter can flip their vote freely (up→down, down→up). The denormalized
+// counters always move in lock-step (one column +1, the other -1) so a
+// voter's net contribution stays exactly 1, no matter how many times they
+// flip. Per-IP rate limiting (60/h) handles spam.
 
 declare(strict_types=1);
 require __DIR__ . '/../db.php';
@@ -205,13 +210,12 @@ function feedback_vote(): void {
         json_response(['error' => 'Submission not found'], 404);
     }
 
-    $action        = null;
-    $cooldownHours = 0;
+    $action = null;
 
     $pdo->beginTransaction();
     try {
         $existing = $pdo->prepare(
-            'SELECT vote, updated_at FROM community_votes
+            'SELECT vote FROM community_votes
              WHERE submission_id = ? AND voter_uuid = ?'
         );
         $existing->execute([$submissionId, $voterUuid]);
@@ -222,33 +226,27 @@ function feedback_vote(): void {
             if ($prevVote === $vote) {
                 $action = 'noop';
             } else {
-                $prevTs    = strtotime($prev['updated_at']);
-                $deltaSecs = time() - $prevTs;
-                if ($deltaSecs < 86400) {
-                    $action        = 'cooldown';
-                    $cooldownHours = (int)max(1, ceil((86400 - $deltaSecs) / 3600));
+                // Flip: swap the voter's contribution between the two counters.
+                $pdo->prepare(
+                    'UPDATE community_votes SET vote = ?
+                     WHERE submission_id = ? AND voter_uuid = ?'
+                )->execute([$vote, $submissionId, $voterUuid]);
+                if ($vote === 1) {
+                    $pdo->prepare(
+                        'UPDATE submissions
+                         SET community_true_count  = community_true_count + 1,
+                             community_false_count = GREATEST(community_false_count - 1, 0)
+                         WHERE id = ?'
+                    )->execute([$submissionId]);
                 } else {
                     $pdo->prepare(
-                        'UPDATE community_votes SET vote = ?
-                         WHERE submission_id = ? AND voter_uuid = ?'
-                    )->execute([$vote, $submissionId, $voterUuid]);
-                    if ($vote === 1) {
-                        $pdo->prepare(
-                            'UPDATE submissions
-                             SET community_true_count  = community_true_count + 1,
-                                 community_false_count = GREATEST(community_false_count - 1, 0)
-                             WHERE id = ?'
-                        )->execute([$submissionId]);
-                    } else {
-                        $pdo->prepare(
-                            'UPDATE submissions
-                             SET community_false_count = community_false_count + 1,
-                                 community_true_count  = GREATEST(community_true_count - 1, 0)
-                             WHERE id = ?'
-                        )->execute([$submissionId]);
-                    }
-                    $action = 'flipped';
+                        'UPDATE submissions
+                         SET community_false_count = community_false_count + 1,
+                             community_true_count  = GREATEST(community_true_count - 1, 0)
+                         WHERE id = ?'
+                    )->execute([$submissionId]);
                 }
+                $action = 'flipped';
             }
         } else {
             $pdo->prepare(
@@ -262,13 +260,6 @@ function feedback_vote(): void {
     } catch (Throwable $t) {
         $pdo->rollBack();
         json_response(['error' => 'DB error: ' . $t->getMessage()], 500);
-    }
-
-    if ($action === 'cooldown') {
-        json_response([
-            'error'          => "Ai votat de curând. Poți modifica peste {$cooldownHours}h.",
-            'cooldown_hours' => $cooldownHours,
-        ], 429);
     }
 
     $stmt = $pdo->prepare('SELECT community_true_count, community_false_count FROM submissions WHERE id = ?');
