@@ -230,6 +230,7 @@ const JUDETE = [
     'Buzau','Caras-Severin','Calarasi','Cluj','Constanta','Covasna','Dambovita','Dolj','Galati','Giurgiu',
     'Gorj','Harghita','Hunedoara','Ialomita','Iasi','Ilfov','Maramures','Mehedinti','Mures','Neamt',
     'Olt','Prahova','Satu Mare','Salaj','Sibiu','Suceava','Teleorman','Timis','Tulcea','Vaslui','Valcea','Vrancea',
+    'Diaspora',
 ];
 
 const DOMENII = [
@@ -252,3 +253,81 @@ const DOMENII = [
 ];
 
 const SEXE = ['M', 'F', 'X'];
+
+// =============================================================================
+// FX rates (EUR → RON)
+//
+// We store one row per BNR publishing date in `fx_rates` and always persist
+// monetary amounts in RON. A daily cron (backend/fx-fetch.php, 14:00 local —
+// BNR publishes ~13:00 RO time) refreshes the table; everything else reads the
+// latest stored rate so we never hit BNR on the hot path or trip rate limits.
+// =============================================================================
+
+const FX_BNR_URL = 'https://www.bnr.ro/nbrfxrates.xml';
+
+/**
+ * Fetch the current EUR→RON reference rate from the BNR daily XML feed.
+ * Returns ['date' => 'YYYY-MM-DD', 'eur_ron' => float]. Throws on any failure
+ * so callers (cron / submit fallback) can decide how loud to be.
+ */
+function fx_fetch_bnr(): array {
+    $ctx = stream_context_create([
+        'http' => ['timeout' => 15, 'header' => "User-Agent: datorii-fx/1.0\r\n"],
+        'ssl'  => ['verify_peer' => true, 'verify_peer_name' => true],
+    ]);
+    $xml = @file_get_contents(FX_BNR_URL, false, $ctx);
+    if ($xml === false || $xml === '') {
+        throw new RuntimeException('BNR fetch failed (empty response)');
+    }
+
+    $eur = null;
+    $date = '';
+
+    // Primary: SimpleXML with the BNR default namespace.
+    $prev = libxml_use_internal_errors(true);
+    $doc = simplexml_load_string($xml);
+    libxml_use_internal_errors($prev);
+    if ($doc !== false) {
+        $doc->registerXPathNamespace('b', 'http://www.bnr.ro/xsd');
+        $cube = $doc->xpath('//b:Cube');
+        if ($cube && isset($cube[0]['date'])) $date = (string)$cube[0]['date'];
+        $rate = $doc->xpath("//b:Cube/b:Rate[@currency='EUR']");
+        if ($rate) $eur = (float)$rate[0];
+    }
+
+    // Fallback: regex (namespace-agnostic, format has been stable for years).
+    if ($eur === null && preg_match('/<Rate[^>]*currency="EUR"[^>]*>\s*([\d.]+)\s*<\/Rate>/', $xml, $m)) {
+        $eur = (float)$m[1];
+    }
+    if ($date === '' && preg_match('/<Cube[^>]*date="([\d-]+)"/', $xml, $md)) {
+        $date = $md[1];
+    }
+
+    if ($eur === null || $eur <= 0) {
+        throw new RuntimeException('BNR XML: EUR rate not found or invalid');
+    }
+    if ($date === '') $date = date('Y-m-d');
+
+    return ['date' => $date, 'eur_ron' => $eur];
+}
+
+/** Upsert a rate keyed by its publishing date (idempotent — safe to re-run). */
+function fx_store_rate(PDO $pdo, string $date, float $rate, string $source = 'BNR'): void {
+    $stmt = $pdo->prepare(
+        'INSERT INTO fx_rates (rate_date, eur_ron, source) VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE eur_ron = VALUES(eur_ron), source = VALUES(source), fetched_at = CURRENT_TIMESTAMP'
+    );
+    $stmt->execute([$date, $rate, $source]);
+}
+
+/** Latest stored rate as ['rate_date' => string, 'eur_ron' => float], or null if none. */
+function fx_latest(PDO $pdo): ?array {
+    $row = $pdo->query('SELECT rate_date, eur_ron FROM fx_rates ORDER BY rate_date DESC LIMIT 1')->fetch();
+    if (!$row) return null;
+    return ['rate_date' => (string)$row['rate_date'], 'eur_ron' => (float)$row['eur_ron']];
+}
+
+/** Convert an integer EUR amount to integer RON using the given rate. */
+function fx_eur_to_ron(int $eur, float $rate): int {
+    return (int) round($eur * $rate);
+}

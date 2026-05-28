@@ -13,6 +13,8 @@ $approvedSubmissions = (int)$pdo->query(
        AND EXISTS (SELECT 1 FROM entries e WHERE e.submission_id = s.id AND e.status = 1)"
 )->fetchColumn();
 
+$fx = fx_latest($pdo);
+
 json_response([
     'datorii_types' => DATORII_TYPES,
     'asset_types' => ASSET_TYPES,
@@ -20,4 +22,5 @@ json_response([
     'domenii' => DOMENII,
     'sexe' => SEXE,
     'approved_submissions_count' => $approvedSubmissions,
+    'fx' => $fx ? ['eur_ron' => $fx['eur_ron'], 'date' => $fx['rate_date']] : null,
 ]);

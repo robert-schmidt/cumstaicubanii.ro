@@ -1,15 +1,21 @@
-import { useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import { fetchStats } from '../lib/api.js';
-import { formatRon, formatNumber } from '../lib/format.js';
+import { formatRon, formatNumber, formatMoney } from '../lib/format.js';
 import FAQ from '../components/FAQ.jsx';
 
 const DEBT_PALETTE = ['#ef4444', '#f97316', '#f59e0b', '#dc2626', '#b91c1c', '#9a3412'];
 const ASSET_PALETTE = ['#10b981', '#14b8a6', '#0ea5e9', '#22c55e', '#059669', '#0d9488', '#3b82f6'];
 
+// Currency-aware money formatter shared across the dashboard. RON by default;
+// when the user flips to EUR we divide RON values by the BNR rate on the fly.
+const MoneyContext = createContext(formatRon);
+const useMoney = () => useContext(MoneyContext);
+
 export default function DashboardPage({ uuid, sid }) {
   const [filters, setFilters] = useState({ judet: '', sex: '', ageGroup: '' });
+  const [currency, setCurrency] = useState('RON');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -24,6 +30,9 @@ export default function DashboardPage({ uuid, sid }) {
     return () => { cancel = true; };
   }, [uuid, sid, filters.judet, filters.sex, filters.ageGroup]);
 
+  const fxRate = data?.meta?.fx?.eur_ron ?? null;
+  const fmt = useMemo(() => (n) => formatMoney(n, currency, fxRate), [currency, fxRate]);
+
   if (loading && !data) return <div className="max-w-6xl mx-auto px-4 py-16 text-center text-slate-500">Se încarcă…</div>;
   if (error) return <div className="max-w-3xl mx-auto px-4 py-16 text-rose-600">{error}</div>;
   if (!data) return null;
@@ -31,6 +40,7 @@ export default function DashboardPage({ uuid, sid }) {
   const { user, population, breakdown, by_judet, by_domeniu, by_persoane_intretinere, optimism, meta, submissions_approved, submissions_flagged } = data;
 
   return (
+    <MoneyContext.Provider value={fmt}>
     <div className="max-w-6xl mx-auto px-4 py-8 sm:py-10 space-y-8">
       <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
         <div>
@@ -39,7 +49,10 @@ export default function DashboardPage({ uuid, sid }) {
             <strong>{formatNumber(submissions_approved)}</strong> intrări aprobate · <strong>{formatNumber(submissions_flagged)}</strong> troli ⚠️
           </p>
         </div>
-        <Filters meta={meta} filters={filters} onChange={setFilters} />
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          {fxRate && <CurrencyToggle currency={currency} onChange={setCurrency} rate={fxRate} date={meta?.fx?.date} />}
+          <Filters meta={meta} filters={filters} onChange={setFilters} />
+        </div>
       </header>
 
       {user && <ShareCard user={user} />}
@@ -115,6 +128,33 @@ export default function DashboardPage({ uuid, sid }) {
         <FAQ />
       </Card>
     </div>
+    </MoneyContext.Provider>
+  );
+}
+
+function CurrencyToggle({ currency, onChange, rate, date }) {
+  return (
+    <div className="flex items-center gap-2 shrink-0">
+      <div className="inline-flex rounded-full border border-slate-300 bg-white p-0.5 text-sm shadow-sm">
+        {['RON', 'EUR'].map(c => (
+          <button
+            key={c}
+            type="button"
+            onClick={() => onChange(c)}
+            aria-pressed={currency === c}
+            className={'px-3 py-1 rounded-full transition cursor-pointer ' +
+              (currency === c ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900')}
+          >
+            {c}
+          </button>
+        ))}
+      </div>
+      {currency === 'EUR' && rate ? (
+        <span className="text-xs text-slate-400 whitespace-nowrap hidden sm:inline">
+          curs BNR {Number(rate).toFixed(4)}{date ? ` · ${date}` : ''}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -162,6 +202,7 @@ function Card({ title, children, className = '' }) {
 }
 
 function PersonalSummary({ user }) {
+  const fmt = useMoney();
   const netPositive = user.net_worth >= 0;
   return (
     <motion.section
@@ -172,7 +213,7 @@ function PersonalSummary({ user }) {
         <div>
           <p className="text-slate-300 text-sm uppercase tracking-wider">Situația ta</p>
           <p className={'mt-1 text-4xl sm:text-5xl font-bold ' + (netPositive ? 'text-emerald-300' : 'text-rose-300')}>
-            {formatRon(user.net_worth)}
+            {fmt(user.net_worth)}
           </p>
           <p className="text-slate-300 text-sm mt-1">Net worth (asset-uri − datorii)</p>
         </div>
@@ -182,8 +223,8 @@ function PersonalSummary({ user }) {
         </span>
       </div>
       <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-4">
-        <Stat label="Total datorii" value={formatRon(user.total_datorii)} accent="text-rose-300" />
-        <Stat label="Total asset-uri" value={formatRon(user.total_asset)} accent="text-emerald-300" />
+        <Stat label="Total datorii" value={fmt(user.total_datorii)} accent="text-rose-300" />
+        <Stat label="Total asset-uri" value={fmt(user.total_asset)} accent="text-emerald-300" />
         <Stat
           label="Raport datorii / asset-uri"
           value={user.ratio_datorii_asset !== null ? (user.ratio_datorii_asset * 100).toFixed(0) + '%' : '—'}
@@ -224,6 +265,7 @@ function Comparison({ user, population }) {
 }
 
 function CompareBar({ label, mine, avg, color }) {
+  const fmt = useMoney();
   const max = Math.max(Math.abs(mine), Math.abs(avg), 1);
   const minePct = Math.min(100, (Math.abs(mine) / max) * 100);
   const avgPct = Math.min(100, (Math.abs(avg) / max) * 100);
@@ -236,7 +278,7 @@ function CompareBar({ label, mine, avg, color }) {
       <div className="flex items-baseline justify-between mb-1">
         <span className="font-medium text-slate-700">{label}</span>
         <span className={'text-xs px-2 py-0.5 rounded-full ' + (better ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800')}>
-          {sign}{formatRon(Math.abs(diff))} {position}
+          {sign}{fmt(Math.abs(diff))} {position}
         </span>
       </div>
       <div className="space-y-1.5">
@@ -248,6 +290,7 @@ function CompareBar({ label, mine, avg, color }) {
 }
 
 function Row({ label, value, pct, color, bold = false }) {
+  const fmt = useMoney();
   // label e fie "tu" fie "median" (cu cele 6 chars o lăsăm la w-14 din mai sus)
   return (
     <div className="flex items-center gap-3">
@@ -258,7 +301,7 @@ function Row({ label, value, pct, color, bold = false }) {
           className="h-full rounded-full" style={{ background: color }}
         />
       </div>
-      <span className={'w-32 text-right text-sm ' + (bold ? 'font-semibold text-slate-900' : 'text-slate-500')}>{formatRon(value)}</span>
+      <span className={'w-32 text-right text-sm ' + (bold ? 'font-semibold text-slate-900' : 'text-slate-500')}>{fmt(value)}</span>
     </div>
   );
 }
@@ -314,6 +357,7 @@ function PercentileCard({ label, pct, betterHigh }) {
 }
 
 function PieBlock({ data, palette }) {
+  const fmt = useMoney();
   if (!data.length) return <p className="text-sm text-slate-500">Fără date.</p>;
   return (
     <div className="h-72">
@@ -322,7 +366,7 @@ function PieBlock({ data, palette }) {
           <Pie data={data} dataKey="value" nameKey="name" innerRadius={50} outerRadius={90} paddingAngle={2}>
             {data.map((_, i) => <Cell key={i} fill={palette[i % palette.length]} />)}
           </Pie>
-          <Tooltip formatter={(v) => formatRon(v)} />
+          <Tooltip formatter={(v) => fmt(v)} />
           <Legend />
         </PieChart>
       </ResponsiveContainer>
@@ -337,6 +381,7 @@ function PieBlock({ data, palette }) {
 const MIN_SAMPLE = 2;
 
 function JudetList({ rows, userJudet }) {
+  const fmt = useMoney();
   const { sorted, max } = useMemo(() => {
     const hi = rows.filter(r => r.count >= MIN_SAMPLE);
     const lo = rows.filter(r => r.count <  MIN_SAMPLE);
@@ -373,7 +418,7 @@ function JudetList({ rows, userJudet }) {
             <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
               <div className={'h-full ' + barCls} style={{ width: pct + '%' }} />
             </div>
-            <span className={'w-28 text-right text-sm ' + valueCls}>{formatRon(r.median_net)}</span>
+            <span className={'w-28 text-right text-sm ' + valueCls}>{fmt(r.median_net)}</span>
             <span className="w-10 text-right text-xs text-slate-400">n={r.count}</span>
           </div>
         );
@@ -383,6 +428,7 @@ function JudetList({ rows, userJudet }) {
 }
 
 function TypeBars({ data, color, userByType }) {
+  const fmt = useMoney();
   if (!data || !data.length) return <p className="text-sm text-slate-500">Fără date.</p>;
   // Sort and chart by MEDIAN, not mean. Fall back to avg if median field is missing.
   const m = (r) => (r.median ?? r.avg ?? 0);
@@ -400,7 +446,7 @@ function TypeBars({ data, color, userByType }) {
             <div className="flex items-baseline justify-between text-sm mb-1">
               <span className="text-slate-700">{r.type}</span>
               <span className="text-slate-500">
-                median <span className="font-medium text-slate-800">{formatRon(ref)}</span>
+                median <span className="font-medium text-slate-800">{fmt(ref)}</span>
                 <span className="ml-2 text-xs text-slate-400">n={r.count}</span>
               </span>
             </div>
@@ -414,13 +460,13 @@ function TypeBars({ data, color, userByType }) {
                   initial={{ width: 0 }} animate={{ width: minePct + '%' }} transition={{ duration: 0.6 }}
                   className="absolute inset-y-0 left-0 h-full rounded-full"
                   style={{ background: color, boxShadow: '0 0 0 1px white' }}
-                  title={'tu: ' + formatRon(mine)}
+                  title={'tu: ' + fmt(mine)}
                 />
               ) : null}
             </div>
             {mine ? (
               <div className="text-xs text-slate-500 mt-0.5">
-                tu: <span className="font-medium text-slate-800">{formatRon(mine)}</span>
+                tu: <span className="font-medium text-slate-800">{fmt(mine)}</span>
               </div>
             ) : null}
           </div>
@@ -431,6 +477,7 @@ function TypeBars({ data, color, userByType }) {
 }
 
 function DomeniuList({ rows }) {
+  const fmt = useMoney();
   const { sorted, max } = useMemo(() => {
     if (!rows) return { sorted: [], max: 1 };
     const hi = rows.filter(r => r.count >= MIN_SAMPLE);
@@ -461,7 +508,7 @@ function DomeniuList({ rows }) {
             <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
               <div className={'h-full ' + barCls} style={{ width: pct + '%' }} />
             </div>
-            <span className={'w-28 text-right text-sm ' + (thin ? 'text-slate-400' : 'text-slate-600')}>{formatRon(r.median_net)}</span>
+            <span className={'w-28 text-right text-sm ' + (thin ? 'text-slate-400' : 'text-slate-600')}>{fmt(r.median_net)}</span>
             <span className="w-10 text-right text-xs text-slate-400">n={r.count}</span>
           </div>
         );
@@ -664,6 +711,7 @@ function ShareBtnButton({ onClick, label, bg, hover, children }) {
 
 
 function PersoaneStats({ rows }) {
+  const fmt = useMoney();
   if (!rows || !rows.length) return <p className="text-sm text-slate-500">Fără date.</p>;
   // Keep the natural 0 → 4+ bucket order (the backend already returns it
   // sorted that way). Scale bar widths against high-n buckets only so a
@@ -691,7 +739,7 @@ function PersoaneStats({ rows }) {
                   : `${r.bucket} persoane`}
               </span>
               <span>
-                <span className={'font-semibold ' + valueCls}>{formatRon(r.median_net)}</span>
+                <span className={'font-semibold ' + valueCls}>{fmt(r.median_net)}</span>
                 <span className="ml-2 text-xs text-slate-400">n={r.count}</span>
               </span>
             </div>
@@ -795,6 +843,7 @@ function DistRow({ color, label, count, pct, accent }) {
 }
 
 function OptimismMedians({ optimism }) {
+  const fmt = useMoney();
   const rows = [
     { label: '😊 Optimiști', median: optimism.optimist.median_net, count: optimism.optimist.count, color: '#10b981' },
     { label: '😟 Pesimiști', median: optimism.pesimist.median_net, count: optimism.pesimist.count, color: '#f59e0b' },
@@ -811,7 +860,7 @@ function OptimismMedians({ optimism }) {
             <div className="flex items-baseline justify-between mb-1.5">
               <span className="font-medium text-slate-800">{r.label}</span>
               <span className="text-sm">
-                <span className="font-semibold text-slate-900">{formatRon(r.median)}</span>
+                <span className="font-semibold text-slate-900">{fmt(r.median)}</span>
                 <span className="ml-2 text-xs text-slate-400">n={r.count}</span>
               </span>
             </div>
@@ -828,7 +877,7 @@ function OptimismMedians({ optimism }) {
         Folosim <strong>mediana</strong> (nu media), mai puțin influențată de valori extreme.
         {diff !== 0 && rows.every(r => r.count > 0) && (
           <> Diferență: <strong className={diff > 0 ? 'text-emerald-600' : 'text-amber-600'}>
-            {diff > 0 ? 'optimiștii au cu ' : 'pesimiștii au cu '}{formatRon(Math.abs(diff))}{' '}
+            {diff > 0 ? 'optimiștii au cu ' : 'pesimiștii au cu '}{fmt(Math.abs(diff))}{' '}
             {diff > 0 ? 'mai mult decât pesimiștii' : 'mai mult decât optimiștii'}
           </strong>.</>
         )}

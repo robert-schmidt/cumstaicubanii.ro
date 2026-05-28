@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { fetchMeta, fetchStats, submitForm } from '../lib/api.js';
 import { markSubmitted, setSid, isValidSid, hasSubmitted, getSid } from '../lib/identity.js';
-import { formatInput, parseNumber, stripAmountChars, stripDigits, formatNumber } from '../lib/format.js';
+import { formatInput, parseNumber, stripAmountChars, stripDigits, formatNumber, formatRon } from '../lib/format.js';
 import FAQ from '../components/FAQ.jsx';
 
 const VARSTA_MIN = 14, VARSTA_MAX = 110;
@@ -75,15 +75,15 @@ export default function FormPage({ uuid }) {
   }, []);
 
   function addRow(kind) {
-    const row = { id: tmpId(), type: '', amount: '' };
+    const row = { id: tmpId(), type: '', amount: '', currency: 'RON' };
     if (kind === 'datorie') setDatorii(prev => [...prev, row]);
     else setAsset(prev => [...prev, row]);
   }
 
   function fillSample() {
     const fmt = (n) => new Intl.NumberFormat('ro-RO').format(n);
-    setDatorii(SAMPLE_DATORII.map(e => ({ id: tmpId(), type: e.type, amount: fmt(e.amount) })));
-    setAsset(SAMPLE_ASSET.map(e => ({ id: tmpId(), type: e.type, amount: fmt(e.amount) })));
+    setDatorii(SAMPLE_DATORII.map(e => ({ id: tmpId(), type: e.type, amount: fmt(e.amount), currency: 'RON' })));
+    setAsset(SAMPLE_ASSET.map(e => ({ id: tmpId(), type: e.type, amount: fmt(e.amount), currency: 'RON' })));
     setOptimist(true);
     setShowDemo(true);
     setDemo({ ...SAMPLE_DEMO });
@@ -113,13 +113,13 @@ export default function FormPage({ uuid }) {
       const amt = parseNumber(r.amount);
       if (!r.type) continue;
       if (amt <= 0) { setError('Toate sumele trebuie să fie pozitive.'); return; }
-      entries.push({ kind: 'datorie', type: r.type, amount: amt });
+      entries.push({ kind: 'datorie', type: r.type, amount: amt, currency: r.currency || 'RON' });
     }
     for (const r of asset) {
       const amt = parseNumber(r.amount);
       if (!r.type) continue;
       if (amt <= 0) { setError('Toate sumele trebuie să fie pozitive.'); return; }
-      entries.push({ kind: 'asset', type: r.type, amount: amt });
+      entries.push({ kind: 'asset', type: r.type, amount: amt, currency: r.currency || 'RON' });
     }
     if (entries.length === 0) {
       setError('Adaugă cel puțin o datorie sau un asset.');
@@ -218,6 +218,7 @@ export default function FormPage({ uuid }) {
             color="rose"
             rows={datorii}
             types={meta.datorii_types}
+            rate={meta.fx?.eur_ron ?? null}
             onAdd={() => addRow('datorie')}
             onUpdate={(id, patch) => updateRow('datorie', id, patch)}
             onRemove={(id) => removeRow('datorie', id)}
@@ -227,6 +228,7 @@ export default function FormPage({ uuid }) {
             color="emerald"
             rows={asset}
             types={meta.asset_types}
+            rate={meta.fx?.eur_ron ?? null}
             onAdd={() => addRow('asset')}
             onUpdate={(id, patch) => updateRow('asset', id, patch)}
             onRemove={(id) => removeRow('asset', id)}
@@ -304,7 +306,7 @@ export default function FormPage({ uuid }) {
                       <option value="F">Feminin</option>
                     </select>
                   </Field>
-                  <Field label="Persoane în întreținere" error={demoErrors.persoane_intretinere}>
+                  <Field label={<>Persoane în întreținere <span className="font-normal text-slate-400">(excluzându-te pe tine)</span></>} error={demoErrors.persoane_intretinere}>
                     <input
                       type="text"
                       inputMode="numeric"
@@ -437,7 +439,8 @@ function SidLogin() {
 const baseField = 'rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/20 focus:border-slate-500';
 const inputCls = baseField + ' w-full';
 const selectCls = baseField + ' w-full pr-8';
-const amountInputCls = baseField + ' w-36 text-right';
+const amountInputCls = baseField + ' w-28 text-right';
+const currencySelectCls = 'rounded-lg border border-slate-300 bg-white py-2 pl-2.5 pr-7 text-sm shrink-0 w-[5.25rem] focus:outline-none focus:ring-2 focus:ring-slate-900/20 focus:border-slate-500';
 
 function Field({ label, error, children }) {
   return (
@@ -449,12 +452,17 @@ function Field({ label, error, children }) {
   );
 }
 
-function Column({ title, color, rows, types, onAdd, onUpdate, onRemove }) {
+function Column({ title, color, rows, types, rate, onAdd, onUpdate, onRemove }) {
   const accent = color === 'rose'
     ? { ring: 'ring-rose-200', dot: 'bg-rose-500', btn: 'text-rose-700 bg-rose-50 hover:bg-rose-100 border-rose-200', total: 'text-rose-600' }
     : { ring: 'ring-emerald-200', dot: 'bg-emerald-500', btn: 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200', total: 'text-emerald-600' };
 
-  const total = rows.reduce((s, r) => s + parseNumber(r.amount), 0);
+  // Total is shown in RON-equivalent — EUR rows are converted with the BNR rate
+  // so a mixed-currency column still adds up to something meaningful.
+  const total = rows.reduce((s, r) => {
+    const amt = parseNumber(r.amount);
+    return s + (r.currency === 'EUR' && rate ? amt * rate : amt);
+  }, 0);
 
   return (
     <div className={'bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 ring-4 ring-inset ' + accent.ring}>
@@ -468,43 +476,63 @@ function Column({ title, color, rows, types, onAdd, onUpdate, onRemove }) {
 
       <div className="mt-4 space-y-2">
         <AnimatePresence initial={false}>
-          {rows.map(r => (
+          {rows.map(r => {
+            const cur = r.currency || 'RON';
+            const amt = parseNumber(r.amount);
+            const showPreview = cur === 'EUR' && rate && amt > 0;
+            return (
             <motion.div
               key={r.id}
               initial={{ opacity: 0, y: -4 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, height: 0 }}
-              className="flex items-center gap-2"
             >
-              <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <div className="flex-1 min-w-0">
+                  <select
+                    value={r.type}
+                    onChange={e => onUpdate(r.id, { type: e.target.value })}
+                    className={selectCls}
+                  >
+                    <option value="">— alege tip —</option>
+                    {types.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="sumă"
+                  value={r.amount}
+                  onChange={e => onUpdate(r.id, { amount: stripAmountChars(e.target.value) })}
+                  onBlur={e => onUpdate(r.id, { amount: formatInput(e.target.value) })}
+                  className={amountInputCls}
+                />
                 <select
-                  value={r.type}
-                  onChange={e => onUpdate(r.id, { type: e.target.value })}
-                  className={selectCls}
+                  value={cur}
+                  onChange={e => onUpdate(r.id, { currency: e.target.value })}
+                  className={currencySelectCls}
+                  aria-label="monedă"
                 >
-                  <option value="">— alege tip —</option>
-                  {types.map(t => <option key={t} value={t}>{t}</option>)}
+                  <option value="RON">RON</option>
+                  <option value="EUR">EUR</option>
                 </select>
+                <button
+                  type="button"
+                  onClick={() => onRemove(r.id)}
+                  aria-label="șterge"
+                  className="text-slate-400 hover:text-slate-700 px-2 py-2 rounded-lg hover:bg-slate-100"
+                >
+                  ✕
+                </button>
               </div>
-              <input
-                type="text"
-                inputMode="numeric"
-                placeholder="sumă RON"
-                value={r.amount}
-                onChange={e => onUpdate(r.id, { amount: stripAmountChars(e.target.value) })}
-                onBlur={e => onUpdate(r.id, { amount: formatInput(e.target.value) })}
-                className={amountInputCls}
-              />
-              <button
-                type="button"
-                onClick={() => onRemove(r.id)}
-                aria-label="șterge"
-                className="text-slate-400 hover:text-slate-700 px-2 py-2 rounded-lg hover:bg-slate-100"
-              >
-                ✕
-              </button>
+              {showPreview && (
+                <div className="text-xs text-slate-400 text-right mt-0.5 pr-9">
+                  ≈ {formatRon(amt * rate)}
+                </div>
+              )}
             </motion.div>
-          ))}
+            );
+          })}
         </AnimatePresence>
       </div>
 

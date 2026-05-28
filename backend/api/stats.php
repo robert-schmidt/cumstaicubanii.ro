@@ -462,6 +462,7 @@ $result = [
         'judete' => JUDETE,
         'domenii' => DOMENII,
         'age_groups' => ['14-24','25-34','35-44','45-54','55-64','65+'],
+        'fx' => ($fx = fx_latest($pdo)) ? ['eur_ron' => $fx['eur_ron'], 'date' => $fx['rate_date']] : null,
     ],
 ];
 

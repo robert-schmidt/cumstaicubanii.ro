@@ -76,19 +76,48 @@ if (count($entries) > 50) json_response(['error' => 'Prea multe intrări'], 400)
 
 const AMOUNT_MAX = 100_000_000_000; // 100 miliarde RON — safety cap, dincolo de orice realist
 
+// EUR entries are converted to RON at submit time using the latest stored BNR
+// rate (refreshed daily by fx-fetch.php). Resolved lazily so RON-only submits
+// never touch the fx table or the network. If the table is empty (cron hasn't
+// run yet) we fetch once and persist.
+$eurRate = null; $eurRateResolved = false;
+$resolveEurRate = function () use (&$eurRate, &$eurRateResolved): ?float {
+    if ($eurRateResolved) return $eurRate;
+    $eurRateResolved = true;
+    $p = db();
+    $latest = fx_latest($p);
+    if ($latest === null) {
+        try { $r = fx_fetch_bnr(); fx_store_rate($p, $r['date'], $r['eur_ron']); $latest = $r; }
+        catch (Throwable $t) { $latest = null; }
+    }
+    $eurRate = $latest['eur_ron'] ?? null;
+    return $eurRate;
+};
+
 $cleaned = [];
 foreach ($entries as $e) {
     if (!is_array($e)) continue;
     $kind = (string)($e['kind'] ?? '');
     $type = trim((string)($e['type'] ?? ''));
+    $currency = strtoupper((string)($e['currency'] ?? 'RON'));
+    if (!in_array($currency, ['RON', 'EUR'], true)) $currency = 'RON';
     $rawAmt = $e['amount'] ?? null;
     // Integer-only: reject NaN, non-numeric, fractional. Frontend strips
-    // separators already; this is the strict backend gate.
+    // separators already; this is the strict backend gate. The integer is in
+    // the input currency; EUR is converted to RON right after.
     if (!is_numeric($rawAmt)) continue;
     $asFloat = (float)$rawAmt;
     if ($asFloat <= 0) continue;
     if ($asFloat !== (float)(int)$asFloat) continue; // reject 1234.56
     $amount = (int)$asFloat;
+    if ($currency === 'EUR') {
+        $rate = $resolveEurRate();
+        if ($rate === null || $rate <= 0) {
+            json_response(['error' => 'Cursul EUR indisponibil momentan. Reîncearcă în câteva minute sau introdu sumele în RON.'], 503);
+        }
+        $amount = fx_eur_to_ron($amount, $rate);
+    }
+    if ($amount <= 0) continue;
     if ($amount > AMOUNT_MAX) json_response(['error' => 'Sumă peste limita admisă'], 400);
     if ($kind === 'datorie') {
         if (!in_array($type, DATORII_TYPES, true)) json_response(['error' => "Tip datorie invalid: $type"], 400);
