@@ -67,18 +67,24 @@ if ($method === 'POST' && in_array($action, ['toggle', 'bulk_approve', 'bulk_dis
         http_response_code(403); exit('Bad CSRF token');
     }
     $pdo = db();
+    $affectedSid = 0; // submission whose card the client should re-render (AJAX)
     if ($action === 'toggle') {
         $id = (int)($_POST['id'] ?? 0);
         if ($id > 0) {
             $pdo->prepare('UPDATE entries SET status = 1 - status WHERE id = ?')->execute([$id]);
+            $st = $pdo->prepare('SELECT submission_id FROM entries WHERE id = ?');
+            $st->execute([$id]);
+            $affectedSid = (int)$st->fetchColumn();
         }
     } elseif ($action === 'delete_submission') {
         $sid = (int)($_POST['submission_id'] ?? 0);
         if ($sid > 0) {
             $pdo->prepare('UPDATE submissions SET deleted_at = NOW() WHERE id = ?')->execute([$sid]);
         }
+        $affectedSid = $sid;
     } elseif ($action === 'toggle_spam') {
         $sid = (int)($_POST['submission_id'] ?? 0);
+        $affectedSid = $sid;
         if ($sid > 0) {
             // Read current state, then flip. If we're marking as spam, also
             // disable every entry on the submission (same effect as clicking
@@ -100,9 +106,24 @@ if ($method === 'POST' && in_array($action, ['toggle', 'bulk_approve', 'bulk_dis
         if ($sid > 0) {
             $pdo->prepare('UPDATE entries SET status = ? WHERE submission_id = ?')->execute([$newStatus, $sid]);
         }
+        $affectedSid = $sid;
     }
     $back = (string)($_POST['back'] ?? '/admin');
     if (!str_starts_with($back, '/')) $back = '/admin';
+
+    // AJAX path: return just the affected card (or 204 on delete) so the client
+    // can swap it in place without a full reload — the reload is what loses the
+    // lazy-loaded chunks and breaks scroll restoration.
+    if (strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'fetch') {
+        if ($action === 'delete_submission') { http_response_code(204); exit; }
+        header('Content-Type: text/html; charset=utf-8');
+        if ($affectedSid > 0) {
+            [$s, $entries] = admin_fetch_one($pdo, $affectedSid);
+            if ($s) echo render_submission_card($s, $entries, $csrf, $back);
+        }
+        exit;
+    }
+
     header('Location: ' . $back);
     exit;
 }
@@ -182,11 +203,13 @@ HTML;
 function admin_query_params(): array {
     $kind   = (string)($_GET['kind']   ?? '');
     $type   = (string)($_GET['type']   ?? '');
+    $judet  = (string)($_GET['judet']  ?? '');
     $status = $_GET['status'] ?? '';
     $spam   = $_GET['spam'] ?? '';
     $sort   = (string)($_GET['sort']   ?? 'recent');
 
     if ($kind   !== '' && !in_array($kind, ['datorie', 'asset'], true)) $kind = '';
+    if ($judet  !== '' && !in_array($judet, JUDETE, true)) $judet = '';
     if ($status !== '' && !in_array((string)$status, ['0', '1'], true)) $status = '';
     if ($spam   !== '' && !in_array((string)$spam,   ['0', '1'], true)) $spam = '';
     if (!in_array($sort, ['recent', 'amount_desc', 'amount_asc', 'community_flagged', 'community_validated'], true)) $sort = 'recent';
@@ -201,6 +224,10 @@ function admin_query_params(): array {
     if ($type !== '') {
         $where[] = 'EXISTS (SELECT 1 FROM entries e WHERE e.submission_id = s.id AND e.type = ?)';
         $params[] = $type;
+    }
+    if ($judet !== '') {
+        $where[] = 's.judet = ?';
+        $params[] = $judet;
     }
     if ($status !== '') {
         $where[] = 'EXISTS (SELECT 1 FROM entries e WHERE e.submission_id = s.id AND e.status = ?)';
@@ -220,6 +247,7 @@ function admin_query_params(): array {
     return [
         'kind'      => $kind,
         'type'      => $type,
+        'judet'     => $judet,
         'status'    => $status,
         'spam'      => $spam,
         'sort'      => $sort,
@@ -261,9 +289,33 @@ function admin_fetch_batch(PDO $pdo, array $q, int $offset, int $limit): array {
     return [$submissions, $entriesBySubmission];
 }
 
+// Fetch a single non-deleted submission + its entries for re-rendering one card
+// after an AJAX moderation action. Returns [null, []] if missing/deleted.
+function admin_fetch_one(PDO $pdo, int $sid): array {
+    $sStmt = $pdo->prepare(
+        "SELECT s.id, s.uuid, s.session_id, s.created_at, s.judet, s.varsta,
+                s.sex, s.persoane_intretinere, s.domeniu, s.optimist, s.is_spam,
+                s.community_true_count, s.community_false_count
+         FROM submissions s
+         WHERE s.id = ? AND s.deleted_at IS NULL"
+    );
+    $sStmt->execute([$sid]);
+    $s = $sStmt->fetch();
+    if (!$s) return [null, []];
+
+    $eStmt = $pdo->prepare(
+        "SELECT id, submission_id, kind, type, amount, status
+         FROM entries
+         WHERE submission_id = ?
+         ORDER BY status ASC, amount DESC"
+    );
+    $eStmt->execute([$sid]);
+    return [$s, $eStmt->fetchAll()];
+}
+
 function admin_back_url(array $q): string {
     return '/admin?' . http_build_query(array_filter([
-        'kind' => $q['kind'], 'type' => $q['type'], 'status' => $q['status'],
+        'kind' => $q['kind'], 'type' => $q['type'], 'judet' => $q['judet'], 'status' => $q['status'],
         'spam' => $q['spam'], 'sort' => $q['sort'],
     ], fn($v) => $v !== '' && $v !== null));
 }
@@ -339,6 +391,7 @@ HTML;
     // ---- Filters ----
     $kindOpts   = render_options(['' => 'Toate'] + ['datorie' => 'datorie', 'asset' => 'asset'], $q['kind']);
     $typeOpts   = render_options(['' => 'Toate tipurile'] + array_combine($typesAll, $typesAll), $q['type']);
+    $judetOpts  = render_options(['' => 'Toate județele'] + array_combine(JUDETE, JUDETE), $q['judet']);
     $statusOpts = render_options(['' => 'Toate', '1' => 'aprobate', '0' => 'flagged'], (string)$q['status']);
     $spamOpts   = render_options(['' => 'Toate', '0' => 'non-spam', '1' => '🚫 doar spam'], (string)$q['spam']);
     $sortOpts   = render_options([
@@ -357,6 +410,9 @@ HTML;
     </label>
     <label class="text-xs text-slate-600">Tip
       <select name="type" class="block mt-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm min-w-[180px]">{$typeOpts}</select>
+    </label>
+    <label class="text-xs text-slate-600">Județ
+      <select name="judet" class="block mt-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm">{$judetOpts}</select>
     </label>
     <label class="text-xs text-slate-600">Status
       <select name="status" class="block mt-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm">{$statusOpts}</select>
@@ -388,24 +444,57 @@ HTML;
         $sentinel = "<div id=\"lazy-sentinel\" data-offset=\"{$nextOffset}\" class=\"h-1\"></div>";
     }
 
-    // ---- Lazy-load JS + scroll restoration after form actions ----
+    // ---- AJAX moderation actions + lazy-load JS ----
     $lazyJs = <<<'JS'
 <script>
 (function () {
-  // 1) Preserve scroll position across approve/disable/delete form submits.
-  //    Each form posts and the server 302s back to /admin; without this the
-  //    new page would load scrolled to top.
-  var SCROLL_KEY = 'admin_scroll_y';
-  try {
-    var saved = sessionStorage.getItem(SCROLL_KEY);
-    if (saved !== null) {
-      sessionStorage.removeItem(SCROLL_KEY);
-      window.scrollTo(0, parseFloat(saved));
-    }
-  } catch (e) {}
-  document.addEventListener('submit', function () {
-    try { sessionStorage.setItem(SCROLL_KEY, String(window.scrollY)); } catch (e) {}
-  }, true);
+  // 1) Moderation actions (approve/disable/spam/delete) go through fetch instead
+  //    of a full form POST. A full POST 302s back to /admin and reloads the page,
+  //    which drops every lazy-loaded chunk — so the saved scroll position then
+  //    lands short (near the top). Doing it via fetch keeps the DOM and scroll
+  //    untouched. Delegated on document so lazy-loaded / swapped cards work too.
+  var TOUCHED = '0 0 0 3px #facc15'; // yellow ring marking a card we just moderated
+
+  document.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (!form || form.tagName !== 'FORM' || !form.closest('#lazy-list')) return;
+    if (e.defaultPrevented) return; // e.g. delete confirm() was cancelled
+    e.preventDefault();
+
+    var card = form.closest('[data-submission]');
+    if (card && card.dataset.busy === '1') return;
+    if (card) card.dataset.busy = '1';
+    var btn = e.submitter;
+    if (btn) btn.disabled = true;
+
+    var isDelete = /action=delete_submission/.test(form.getAttribute('action') || '');
+
+    fetch(form.action, {
+      method: 'POST',
+      body: new FormData(form),
+      credentials: 'same-origin',
+      headers: { 'X-Requested-With': 'fetch' }
+    })
+      .then(function (r) {
+        if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status);
+        return isDelete ? '' : r.text();
+      })
+      .then(function (html) {
+        if (isDelete || html.trim() === '') { if (card) card.remove(); return; }
+        if (!card) return;
+        var tmp = document.createElement('div');
+        tmp.innerHTML = html.trim();
+        var fresh = tmp.firstElementChild;
+        if (!fresh) { card.dataset.busy = ''; return; }
+        card.replaceWith(fresh);
+        fresh.style.boxShadow = TOUCHED;
+      })
+      .catch(function (err) {
+        console.error('admin action failed', err);
+        if (card) { card.dataset.busy = ''; card.style.boxShadow = '0 0 0 3px #ef4444'; }
+        if (btn) btn.disabled = false;
+      });
+  });
 
   // 2) Lazy load: when sentinel scrolls into view, fetch next batch.
   function observeSentinel() {

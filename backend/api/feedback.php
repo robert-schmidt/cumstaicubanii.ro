@@ -55,6 +55,11 @@ function feedback_list(): void {
         json_response(['error' => 'Tip invalid'], 400);
     }
 
+    $judet = (string)($_GET['judet'] ?? '');
+    if ($judet !== '' && !in_array($judet, JUDETE, true)) {
+        json_response(['error' => 'Judet invalid'], 400);
+    }
+
     $status = (string)($_GET['status'] ?? '');
     if (!in_array($status, ['', '0', '1'], true)) {
         json_response(['error' => 'Status invalid'], 400);
@@ -80,6 +85,10 @@ function feedback_list(): void {
     if ($type !== '') {
         $where[] = 'EXISTS (SELECT 1 FROM entries e WHERE e.submission_id = s.id AND e.type = ?)';
         $params[] = $type;
+    }
+    if ($judet !== '') {
+        $where[] = 's.judet = ?';
+        $params[] = $judet;
     }
     if ($status !== '') {
         $where[] = 'EXISTS (SELECT 1 FROM entries e WHERE e.submission_id = s.id AND e.status = ?)';
