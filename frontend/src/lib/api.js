@@ -29,11 +29,12 @@ export async function submitForm(payload) {
   return j;
 }
 
-export async function fetchFeedback({ uuid, kind, type, status, sort, offset } = {}) {
+export async function fetchFeedback({ uuid, kind, type, judet, status, sort, offset } = {}) {
   const p = new URLSearchParams();
   if (uuid) p.set('uuid', uuid);
   if (kind) p.set('kind', kind);
   if (type) p.set('type', type);
+  if (judet) p.set('judet', judet);
   if (status !== '' && status !== undefined && status !== null) p.set('status', String(status));
   if (sort) p.set('sort', sort);
   if (offset) p.set('offset', String(offset));

@@ -19,7 +19,7 @@ const STATUSES = [
 export default function FeedbackPage() {
   const uuid = useMemo(() => getUuid(), []);
   const [meta, setMeta] = useState(null);
-  const [filters, setFilters] = useState({ kind: '', type: '', status: '', sort: 'recent' });
+  const [filters, setFilters] = useState({ kind: '', type: '', judet: '', status: '', sort: 'recent' });
   const [submissions, setSubmissions] = useState([]);
   const [myVotes, setMyVotes] = useState({});
   const [nextOffset, setNextOffset] = useState(null);
@@ -45,7 +45,7 @@ export default function FeedbackPage() {
       .catch(e => { if (!cancelled) setError(String(e.message || e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [uuid, filters.kind, filters.type, filters.status, filters.sort]);
+  }, [uuid, filters.kind, filters.type, filters.judet, filters.status, filters.sort]);
 
   const loadMore = useCallback(async () => {
     if (nextOffset === null || loadingMore) return;
@@ -111,6 +111,7 @@ export default function FeedbackPage() {
         filters={filters}
         setFilters={setFilters}
         typesAll={typesAll}
+        judete={meta?.judete || []}
       />
 
       {error && (
@@ -165,7 +166,7 @@ export default function FeedbackPage() {
   );
 }
 
-function Filters({ filters, setFilters, typesAll }) {
+function Filters({ filters, setFilters, typesAll, judete }) {
   const set = (patch) => setFilters({ ...filters, ...patch });
   const pill = 'shrink-0 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-sm shadow-sm hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/15 focus:border-slate-500';
   return (
@@ -180,15 +181,19 @@ function Filters({ filters, setFilters, typesAll }) {
           <option value="">🏷️ Toate tipurile</option>
           {typesAll.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
+        <select className={pill} value={filters.judet} onChange={e => set({ judet: e.target.value })}>
+          <option value="">📍 Toate județele</option>
+          {judete.map(j => <option key={j} value={j}>{j}</option>)}
+        </select>
         <select className={pill} value={filters.status} onChange={e => set({ status: e.target.value })}>
           {STATUSES.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
         </select>
         <select className={pill} value={filters.sort} onChange={e => set({ sort: e.target.value })}>
           {SORTS.map(o => <option key={o.v} value={o.v}>↕ {o.label}</option>)}
         </select>
-        {(filters.kind || filters.type || filters.status || filters.sort !== 'recent') && (
+        {(filters.kind || filters.type || filters.judet || filters.status || filters.sort !== 'recent') && (
           <button
-            onClick={() => setFilters({ kind: '', type: '', status: '', sort: 'recent' })}
+            onClick={() => setFilters({ kind: '', type: '', judet: '', status: '', sort: 'recent' })}
             className="shrink-0 text-xs text-slate-500 hover:text-rose-600 px-2 py-1.5 rounded-full hover:bg-rose-50"
           >
             ✕ resetează
