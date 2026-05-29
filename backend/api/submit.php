@@ -59,15 +59,28 @@ if ($domeniu !== null) {
     elseif (!in_array($domeniu, DOMENII, true)) json_response(['error' => 'Domeniu invalid'], 400);
 }
 // When user picks 'Altele', a custom free-text label travels in domeniu_other
-// and gets stored in place of 'Altele'. Strip control chars, trim, cap to the
-// VARCHAR(80) column width.
+// and gets stored in place of 'Altele'. We can't whitelist arbitrary input, so
+// scrub it hard: keep only sensible label characters, collapse whitespace, strip
+// stray punctuation, require something meaningful, and cap to the VARCHAR(80)
+// column width. If nothing usable survives, fall back to the literal 'Altele'
+// bucket. A value that matches a known category is folded back to its canonical form.
 if ($domeniu === 'Altele') {
-    $other = trim((string)($body['domeniu_other'] ?? ''));
-    if ($other !== '') {
-        $other = preg_replace('/[\x00-\x1F\x7F]/u', '', $other);
+    $other = (string)($body['domeniu_other'] ?? '');
+    // Drop control chars, then anything outside letters/digits/space + a small
+    // set of label punctuation (replaced with a space so words don't fuse).
+    $other = preg_replace('/[\x00-\x1F\x7F]/u', '', $other);
+    $other = preg_replace('/[^\p{L}\p{N} &\/.,()\-]/u', ' ', $other);
+    // Collapse runs of whitespace, then trim surrounding space and punctuation.
+    $other = trim(preg_replace('/\s+/u', ' ', $other));
+    $other = trim($other, " &/.,()-");
+    if (mb_strlen($other) >= 2) {
         if (mb_strlen($other) > 80) $other = mb_substr($other, 0, 80);
-        if ($other !== '') $domeniu = $other;
+        foreach (DOMENII as $d) {
+            if (mb_strtolower($d) === mb_strtolower($other)) { $other = $d; break; }
+        }
+        $domeniu = $other;
     }
+    // else: too short / empty after scrubbing — keep $domeniu as 'Altele'.
 }
 
 $entries = $body['entries'] ?? [];
