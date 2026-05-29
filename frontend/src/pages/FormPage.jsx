@@ -12,44 +12,13 @@ const PI_MIN = 0, PI_MAX = 20;
 let nextId = 1;
 const tmpId = () => `e${nextId++}`;
 
-// The exact shape that the "✨ Date exemplu" button writes into the form.
-// Kept here so we can detect a submission that matches it byte-for-byte and
-// flag it server-side as untouched-sample (status=0).
-const SAMPLE_DEMO = {
-  judet: 'Cluj',
-  varsta: '34',
-  sex: 'M',
-  persoane_intretinere: '1',
-  domeniu: 'IT & Software',
-  domeniuOther: '',
-};
-const SAMPLE_DATORII = [
-  { type: 'credit imobiliar', amount: 285000 },
-  { type: 'credit personal',  amount: 18500 },
-  { type: 'card credit',      amount: 4200 },
-];
-const SAMPLE_ASSET = [
-  { type: 'depozite bancare', amount: 42000 },
-  { type: 'imobile',          amount: 410000 },
-  { type: 'cryptomonede',     amount: 8500 },
-  { type: 'titluri de stat',  amount: 15000 },
-];
-
-function entriesMatchSample(actualEntries, sample) {
-  if (actualEntries.length !== sample.length) return false;
-  const keyOf = (e) => `${e.type}|${e.amount}`;
-  const a = actualEntries.map(keyOf).sort();
-  const b = sample.map(keyOf).sort();
-  return a.every((v, i) => v === b[i]);
-}
-
 export default function FormPage({ uuid }) {
   const nav = useNavigate();
   const [meta, setMeta] = useState(null);
   const [datorii, setDatorii] = useState([]);
   const [asset, setAsset] = useState([]);
   const [optimist, setOptimist] = useState(null);
-  const [showDemo, setShowDemo] = useState(false);
+  const [showDemo, setShowDemo] = useState(true);
   const [demo, setDemo] = useState({ judet: '', varsta: '', sex: '', persoane_intretinere: '', domeniu: '', domeniuOther: '' });
   const [demoErrors, setDemoErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
@@ -78,16 +47,6 @@ export default function FormPage({ uuid }) {
     const row = { id: tmpId(), type: '', amount: '', currency: 'RON' };
     if (kind === 'datorie') setDatorii(prev => [...prev, row]);
     else setAsset(prev => [...prev, row]);
-  }
-
-  function fillSample() {
-    const fmt = (n) => new Intl.NumberFormat('ro-RO').format(n);
-    setDatorii(SAMPLE_DATORII.map(e => ({ id: tmpId(), type: e.type, amount: fmt(e.amount), currency: 'RON' })));
-    setAsset(SAMPLE_ASSET.map(e => ({ id: tmpId(), type: e.type, amount: fmt(e.amount), currency: 'RON' })));
-    setOptimist(true);
-    setShowDemo(true);
-    setDemo({ ...SAMPLE_DEMO });
-    setError(null);
   }
 
   function updateRow(kind, id, patch) {
@@ -126,52 +85,41 @@ export default function FormPage({ uuid }) {
       return;
     }
 
-    if (demo.varsta) {
+    const demoErr = {};
+    if (!demo.judet) demoErr.judet = 'Obligatoriu.';
+    if (demo.varsta === '') demoErr.varsta = 'Obligatoriu.';
+    else {
       const v = Number(demo.varsta);
-      if (v < VARSTA_MIN || v > VARSTA_MAX) {
-        setError(`Vârsta trebuie să fie între ${VARSTA_MIN} și ${VARSTA_MAX} ani.`);
-        return;
-      }
+      if (v < VARSTA_MIN || v > VARSTA_MAX) demoErr.varsta = `Între ${VARSTA_MIN} și ${VARSTA_MAX} ani.`;
     }
-    if (demo.persoane_intretinere !== '') {
+    if (!demo.sex) demoErr.sex = 'Obligatoriu.';
+    if (demo.persoane_intretinere === '') demoErr.persoane_intretinere = 'Obligatoriu.';
+    else {
       const p = Number(demo.persoane_intretinere);
-      if (p < PI_MIN || p > PI_MAX) {
-        setError(`Persoanele în întreținere trebuie între ${PI_MIN} și ${PI_MAX}.`);
-        return;
-      }
+      if (p < PI_MIN || p > PI_MAX) demoErr.persoane_intretinere = `Între ${PI_MIN} și ${PI_MAX}.`;
+    }
+    if (!demo.domeniu) demoErr.domeniu = 'Obligatoriu.';
+    else if (demo.domeniu === 'Altele' && !demo.domeniuOther.trim()) demoErr.domeniuOther = 'Specifică domeniul.';
+
+    if (Object.keys(demoErr).length > 0) {
+      setDemoErrors(demoErr);
+      setShowDemo(true);
+      setError('Completează toate câmpurile demografice.');
+      return;
     }
 
-    const domeniu = demo.domeniu || null;
-    const domeniuOther = demo.domeniu === 'Altele' && demo.domeniuOther.trim()
-      ? demo.domeniuOther.trim()
-      : null;
-
-    // Detect "✨ Date exemplu was clicked and nothing was touched after". If true,
-    // the backend stores entries with status=0 so this stale sample doesn't
-    // pollute the aggregates. We compare the canonical normalized values.
-    const submittedDatorii = entries.filter(e => e.kind === 'datorie').map(({type, amount}) => ({type, amount}));
-    const submittedAsset   = entries.filter(e => e.kind === 'asset')  .map(({type, amount}) => ({type, amount}));
-    const isUntouchedSample =
-      optimist === true &&
-      demo.judet === SAMPLE_DEMO.judet &&
-      demo.varsta === SAMPLE_DEMO.varsta &&
-      demo.sex === SAMPLE_DEMO.sex &&
-      demo.persoane_intretinere === SAMPLE_DEMO.persoane_intretinere &&
-      demo.domeniu === SAMPLE_DEMO.domeniu &&
-      entriesMatchSample(submittedDatorii, SAMPLE_DATORII) &&
-      entriesMatchSample(submittedAsset, SAMPLE_ASSET);
+    const domeniuOther = demo.domeniu === 'Altele' ? demo.domeniuOther.trim() : null;
 
     const payload = {
       uuid,
       optimist,
-      judet: demo.judet || null,
-      varsta: demo.varsta ? Number(demo.varsta) : null,
-      sex: demo.sex || null,
-      persoane_intretinere: demo.persoane_intretinere !== '' ? Number(demo.persoane_intretinere) : null,
-      domeniu,
+      judet: demo.judet,
+      varsta: Number(demo.varsta),
+      sex: demo.sex,
+      persoane_intretinere: Number(demo.persoane_intretinere),
+      domeniu: demo.domeniu,
       domeniu_other: domeniuOther,
       entries,
-      is_sample: isUntouchedSample,
     };
 
     setSubmitting(true);
@@ -195,20 +143,11 @@ export default function FormPage({ uuid }) {
     <div className="max-w-5xl mx-auto px-4 py-8 sm:py-12">
       {!hasSubmitted() && !getSid() && <SidLogin />}
 
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-        <div>
-          <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-slate-900">Care e situația ta financiară?</h1>
-          <p className="mt-2 text-slate-600 max-w-2xl">
-            Introdu datoriile și asset-urile tale. După submit, vei vedea cum stai față de media celor care au completat înaintea ta. Totul anonim.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={fillSample}
-          className="self-start sm:self-end shrink-0 text-sm px-3 py-1.5 rounded-full border border-slate-300 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition"
-        >
-          ✨ Date exemplu
-        </button>
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}>
+        <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-slate-900">Care e situația ta financiară?</h1>
+        <p className="mt-2 text-slate-600 max-w-2xl">
+          Introdu datoriile și asset-urile tale. După submit, vei vedea cum stai față de media celor care au completat înaintea ta. Totul anonim.
+        </p>
       </motion.div>
 
       <form onSubmit={handleSubmit} className="mt-8 space-y-8">
@@ -268,7 +207,7 @@ export default function FormPage({ uuid }) {
           >
             <span>
               <span className="block font-semibold text-slate-900">Date demografice</span>
-              <span className="block text-xs text-slate-500 font-normal mt-0.5">Opțional, dar ajută la acuratețea statisticilor.</span>
+              <span className="block text-xs text-slate-500 font-normal mt-0.5">Toate câmpurile sunt obligatorii și ajută la acuratețea statisticilor.</span>
             </span>
             <Chevron open={showDemo} className="mt-0.5 shrink-0" />
           </button>
@@ -283,8 +222,12 @@ export default function FormPage({ uuid }) {
                 className="overflow-hidden"
               >
                 <div className="px-5 sm:px-6 pb-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <Field label="Județ">
-                    <select value={demo.judet} onChange={e => setDemo({ ...demo, judet: e.target.value })} className={selectCls}>
+                  <Field label="Județ" error={demoErrors.judet}>
+                    <select
+                      value={demo.judet}
+                      onChange={e => { setDemo({ ...demo, judet: e.target.value }); setDemoErrors(er => ({ ...er, judet: null })); }}
+                      className={selectCls + (demoErrors.judet ? ' border-rose-400 focus:ring-rose-200' : '')}
+                    >
                       <option value="">— alege —</option>
                       {meta.judete.map(j => <option key={j} value={j}>{j}</option>)}
                     </select>
@@ -299,8 +242,12 @@ export default function FormPage({ uuid }) {
                       placeholder="ex. 34"
                     />
                   </Field>
-                  <Field label="Sex">
-                    <select value={demo.sex} onChange={e => setDemo({ ...demo, sex: e.target.value })} className={selectCls}>
+                  <Field label="Sex" error={demoErrors.sex}>
+                    <select
+                      value={demo.sex}
+                      onChange={e => { setDemo({ ...demo, sex: e.target.value }); setDemoErrors(er => ({ ...er, sex: null })); }}
+                      className={selectCls + (demoErrors.sex ? ' border-rose-400 focus:ring-rose-200' : '')}
+                    >
                       <option value="">— alege —</option>
                       <option value="M">Masculin</option>
                       <option value="F">Feminin</option>
@@ -316,15 +263,25 @@ export default function FormPage({ uuid }) {
                       placeholder="ex. 1"
                     />
                   </Field>
-                  <Field label="Domeniu de activitate">
-                    <select value={demo.domeniu} onChange={e => setDemo({ ...demo, domeniu: e.target.value })} className={selectCls}>
+                  <Field label="Domeniu de activitate" error={demoErrors.domeniu}>
+                    <select
+                      value={demo.domeniu}
+                      onChange={e => { setDemo({ ...demo, domeniu: e.target.value }); setDemoErrors(er => ({ ...er, domeniu: null })); }}
+                      className={selectCls + (demoErrors.domeniu ? ' border-rose-400 focus:ring-rose-200' : '')}
+                    >
                       <option value="">— alege —</option>
                       {meta.domenii.map(d => <option key={d} value={d}>{d}</option>)}
                     </select>
                   </Field>
                   {demo.domeniu === 'Altele' && (
-                    <Field label="Specifică domeniul">
-                      <input type="text" value={demo.domeniuOther} onChange={e => setDemo({ ...demo, domeniuOther: e.target.value })} className={inputCls} placeholder="ex: Sport profesionist" />
+                    <Field label="Specifică domeniul" error={demoErrors.domeniuOther}>
+                      <input
+                        type="text"
+                        value={demo.domeniuOther}
+                        onChange={e => { setDemo({ ...demo, domeniuOther: e.target.value }); setDemoErrors(er => ({ ...er, domeniuOther: null })); }}
+                        className={inputCls + (demoErrors.domeniuOther ? ' border-rose-400 focus:ring-rose-200' : '')}
+                        placeholder="ex: Sport profesionist"
+                      />
                     </Field>
                   )}
                 </div>
