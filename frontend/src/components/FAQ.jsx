@@ -9,7 +9,7 @@ const FAQ_ITEMS = [
   },
   {
     q: 'De ce nu validați prin email sau SMS?',
-    a: 'Ținem anonimitatea sus de tot. Un email confirmat n-ar face datele mai veridice — știi cât de parșivi, persuasivi și ostentativi au devenit brokerii de credite? În plus, ne-ar îngreuna și share-uitul rezultatelor.',
+    a: 'Ținem anonimitatea sus de tot. Un email confirmat n-ar face datele mai veridice — știi cât de parșivi și persuasivi au devenit brokerii de credite? În plus, ne-ar îngreuna și share-uitul rezultatelor.',
   },
   {
     q: 'Bun, dar de ce există site-ul ăsta?',
