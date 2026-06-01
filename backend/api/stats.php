@@ -107,6 +107,251 @@ function percentile_of(int $value, array $nums): float {
     return round(($below / $n) * 100, 1);
 }
 
+function pct_of(int $num, int $den): int {
+    return $den > 0 ? (int)round($num / $den * 100) : 0;
+}
+
+// Inverse of the filter's age map: given a raw varsta, return its group label.
+function age_bucket(?int $age): ?string {
+    if ($age === null) return null;
+    if ($age <= 24) return '14-24';
+    if ($age <= 34) return '25-34';
+    if ($age <= 44) return '35-44';
+    if ($age <= 54) return '45-54';
+    if ($age <= 64) return '55-64';
+    return '65+';
+}
+
+// One row per submission (latest-per-uuid, status=1 entries only) carrying the
+// demographic columns + financial totals. $extraWhere/$params come from
+// $buildFilters() so callers control which filter dimensions apply.
+function fetch_financials(PDO $pdo, string $extraWhere, array $params): array {
+    $sql = "SELECT s.varsta, s.sex, s.optimist,
+                   sub.total_datorii, sub.total_asset,
+                   (sub.total_asset - sub.total_datorii) AS net
+            FROM submissions s
+            INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
+            INNER JOIN (
+                SELECT submission_id,
+                       SUM(CASE WHEN kind = 'datorie' THEN amount ELSE 0 END) AS total_datorii,
+                       SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
+                FROM entries WHERE status = 1 GROUP BY submission_id
+            ) sub ON sub.submission_id = s.id
+            WHERE s.deleted_at IS NULL AND s.is_spam = 0 $extraWhere";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll();
+}
+
+// Group financials rows by $bucketFn($row) and compute the rich per-bucket
+// summary used by by_age / by_sex. median_datorii/median_asset/median_leverage
+// use only the rows that actually have that metric, matching the population
+// card's "typical user of this metric" semantics.
+function summarize_buckets(array $rows, callable $bucketFn): array {
+    $by = [];
+    foreach ($rows as $r) {
+        $b = $bucketFn($r);
+        if ($b === null) continue;
+        $by[$b][] = $r;
+    }
+    $out = [];
+    foreach ($by as $bucket => $rs) {
+        $nets = []; $datoriiDebtors = []; $assetHolders = []; $leverage = [];
+        $underwater = 0; $withD = 0; $withA = 0; $optimist = 0;
+        foreach ($rs as $r) {
+            $d = (float)$r['total_datorii'];
+            $a = (float)$r['total_asset'];
+            $nets[] = $a - $d;
+            if ($a - $d < 0) $underwater++;
+            if ($d > 0) { $withD++; $datoriiDebtors[] = $d; }
+            if ($a > 0) { $withA++; $assetHolders[] = $a; $leverage[] = $d / $a; }
+            if ((int)$r['optimist'] === 1) $optimist++;
+        }
+        $n = count($rs);
+        $out[] = [
+            'bucket'           => (string)$bucket,
+            'count'            => $n,
+            'median_net'       => (int)round(median($nets)),
+            'median_datorii'   => (int)round(median($datoriiDebtors)),
+            'median_asset'     => (int)round(median($assetHolders)),
+            'pct_underwater'   => pct_of($underwater, $n),
+            'pct_with_datorii' => pct_of($withD, $n),
+            'pct_with_asset'   => pct_of($withA, $n),
+            'optimist_rate'    => pct_of($optimist, $n),
+            'median_leverage'  => count($leverage) ? round(median($leverage), 2) : 0,
+        ];
+    }
+    return $out;
+}
+
+// Asset / debt composition: sum per (bucket, type). $groupCol is a trusted
+// column name ('varsta' | 'sex'); $bucketFn maps the raw value to a label.
+function composition_by(PDO $pdo, string $groupCol, string $where, array $params, callable $bucketFn): array {
+    $sql = "SELECT s.$groupCol AS grp, e.kind, e.type, SUM(e.amount) AS total
+            FROM entries e
+            JOIN submissions s ON s.id = e.submission_id
+            INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
+            WHERE e.status = 1 AND s.deleted_at IS NULL AND s.is_spam = 0 AND s.$groupCol IS NOT NULL $where
+            GROUP BY grp, e.kind, e.type";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $buckets = ['asset' => [], 'datorie' => []];
+    foreach ($stmt as $r) {
+        $b = $bucketFn($r['grp']);
+        if ($b === null) continue;
+        $kind = $r['kind'];
+        $buckets[$kind][$b] ??= ['bucket' => $b, 'total' => 0, 'by_type' => []];
+        $amt = (int)$r['total'];
+        $buckets[$kind][$b]['total'] += $amt;
+        $buckets[$kind][$b]['by_type'][$r['type']] = ($buckets[$kind][$b]['by_type'][$r['type']] ?? 0) + $amt;
+    }
+    return [
+        'asset'   => array_values($buckets['asset']),
+        'datorii' => array_values($buckets['datorie']),
+    ];
+}
+
+// Ownership prevalence: per bucket, the % of submissions holding at least one
+// entry of each curated type (mortgage / crypto / real-estate).
+function ownership_by(PDO $pdo, string $groupCol, string $where, array $params, callable $bucketFn): array {
+    $sql = "SELECT s.$groupCol AS grp,
+                   MAX(CASE WHEN e.type = 'credit imobiliar' THEN 1 ELSE 0 END) AS has_mortgage,
+                   MAX(CASE WHEN e.type = 'cryptomonede'     THEN 1 ELSE 0 END) AS has_crypto,
+                   MAX(CASE WHEN e.type = 'imobile'          THEN 1 ELSE 0 END) AS has_realestate
+            FROM submissions s
+            INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
+            INNER JOIN entries e ON e.submission_id = s.id AND e.status = 1
+            WHERE s.deleted_at IS NULL AND s.is_spam = 0 AND s.$groupCol IS NOT NULL $where
+            GROUP BY s.id";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $agg = [];
+    foreach ($stmt as $r) {
+        $b = $bucketFn($r['grp']);
+        if ($b === null) continue;
+        $agg[$b] ??= ['count' => 0, 'mortgage' => 0, 'crypto' => 0, 'real_estate' => 0];
+        $agg[$b]['count']++;
+        $agg[$b]['mortgage']    += (int)$r['has_mortgage'];
+        $agg[$b]['crypto']      += (int)$r['has_crypto'];
+        $agg[$b]['real_estate'] += (int)$r['has_realestate'];
+    }
+    $out = [];
+    foreach ($agg as $bucket => $a) {
+        $out[] = [
+            'bucket'      => (string)$bucket,
+            'count'       => $a['count'],
+            'mortgage'    => pct_of($a['mortgage'], $a['count']),
+            'crypto'      => pct_of($a['crypto'], $a['count']),
+            'real_estate' => pct_of($a['real_estate'], $a['count']),
+        ];
+    }
+    return $out;
+}
+
+// Net worth distribution over a pre-filtered net-worth array. Fixed RON edges;
+// the frontend reformats them for the EUR toggle.
+function compute_histogram(array $nets, ?int $userNet): array {
+    $bounds = [
+        [null, 0], [0, 50000], [50000, 200000],
+        [200000, 500000], [500000, 1000000], [1000000, null],
+    ];
+    $bucketOf = function (float $v) use ($bounds): int {
+        foreach ($bounds as $i => [$lo, $hi]) {
+            if (($lo === null || $v >= $lo) && ($hi === null || $v < $hi)) return $i;
+        }
+        return count($bounds) - 1;
+    };
+    $counts = array_fill(0, count($bounds), 0);
+    foreach ($nets as $v) $counts[$bucketOf((float)$v)]++;
+    $buckets = [];
+    foreach ($bounds as $i => [$lo, $hi]) {
+        $buckets[] = ['min' => $lo, 'max' => $hi, 'count' => $counts[$i]];
+    }
+    return ['buckets' => $buckets, 'user_bucket' => $userNet === null ? null : $bucketOf((float)$userNet)];
+}
+
+// Wealth concentration over reported assets (incl. zero-asset users). Returns
+// the share held by the top 1% / top 10% / bottom 50% and the Gini coefficient.
+function compute_concentration(array $assets): array {
+    $vals = array_map('floatval', $assets);
+    $n = count($vals);
+    $total = array_sum($vals);
+    if ($n === 0 || $total <= 0) {
+        return ['top1_pct' => 0, 'top10_pct' => 0, 'bottom50_pct' => 0, 'gini' => 0, 'count' => $n];
+    }
+    rsort($vals); // descending — for top shares
+    $topShare = function (float $frac) use ($vals, $n, $total): int {
+        $k = max(1, (int)ceil($n * $frac));
+        return (int)round(array_sum(array_slice($vals, 0, $k)) / $total * 100);
+    };
+    $kBottom = (int)floor($n * 0.5);
+    $bottomSum = $kBottom > 0 ? array_sum(array_slice($vals, $n - $kBottom)) : 0.0;
+    // Gini = (2·Σ i·x_i)/(n·Σx) − (n+1)/n, with x ascending and i 1-based.
+    $asc = $vals; sort($asc);
+    $weighted = 0.0;
+    foreach ($asc as $i => $v) $weighted += ($i + 1) * $v;
+    $gini = $n > 1 ? round((2 * $weighted) / ($n * $total) - ($n + 1) / $n, 3) : 0;
+    return [
+        'top1_pct'     => $topShare(0.01),
+        'top10_pct'    => $topShare(0.10),
+        'bottom50_pct' => (int)round($bottomSum / $total * 100),
+        'gini'         => $gini,
+        'count'        => $n,
+    ];
+}
+
+// Monthly submission volume + median net worth (time is never a filter dim, so
+// this respects all active filters via $where/$params).
+function compute_timeline(PDO $pdo, string $where, array $params): array {
+    $sql = "SELECT DATE_FORMAT(s.created_at, '%Y-%m') AS ym,
+                   (sub.total_asset - sub.total_datorii) AS net
+            FROM submissions s
+            INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
+            INNER JOIN (
+                SELECT submission_id,
+                       SUM(CASE WHEN kind = 'datorie' THEN amount ELSE 0 END) AS total_datorii,
+                       SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
+                FROM entries WHERE status = 1 GROUP BY submission_id
+            ) sub ON sub.submission_id = s.id
+            WHERE s.deleted_at IS NULL AND s.is_spam = 0 $where";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $byMonth = [];
+    foreach ($stmt as $r) $byMonth[$r['ym']][] = (int)$r['net'];
+    ksort($byMonth);
+    $out = [];
+    foreach ($byMonth as $month => $nets) {
+        $out[] = ['month' => $month, 'count' => count($nets), 'median_net' => (int)round(median($nets))];
+    }
+    return $out;
+}
+
+// Diaspora vs the rest of Romania. Skips the judet filter (it IS the split);
+// honours sex/age via $where/$params.
+function compute_diaspora(PDO $pdo, string $where, array $params): array {
+    $sql = "SELECT s.judet, (sub.total_asset - sub.total_datorii) AS net
+            FROM submissions s
+            INNER JOIN (SELECT MAX(id) AS latest_id FROM submissions GROUP BY uuid) latest ON latest.latest_id = s.id
+            INNER JOIN (
+                SELECT submission_id,
+                       SUM(CASE WHEN kind = 'datorie' THEN amount ELSE 0 END) AS total_datorii,
+                       SUM(CASE WHEN kind = 'asset'   THEN amount ELSE 0 END) AS total_asset
+                FROM entries WHERE status = 1 GROUP BY submission_id
+            ) sub ON sub.submission_id = s.id
+            WHERE s.deleted_at IS NULL AND s.is_spam = 0 AND s.judet IS NOT NULL $where";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $dia = []; $ro = [];
+    foreach ($stmt as $r) {
+        if ($r['judet'] === 'Diaspora') $dia[] = (int)$r['net'];
+        else $ro[] = (int)$r['net'];
+    }
+    return [
+        'diaspora' => ['count' => count($dia), 'median_net' => (int)round(median($dia))],
+        'romania'  => ['count' => count($ro),  'median_net' => (int)round(median($ro))],
+    ];
+}
+
 $rows = fetch_submissions($pdo, $judet, $sex, $ageRange);
 
 $globalNet = []; $globalDatorii = []; $globalAsset = [];
@@ -430,6 +675,50 @@ $submissionCounts = $pdo->query(
 $submissionsApproved = (int)($submissionCounts['approved'] ?? 0);
 $submissionsFlagged  = (int)($submissionCounts['flagged']  ?? 0);
 
+// =============================================================================
+// Cross-dimensional breakdowns (grouped by a dimension that is excluded from
+// the active filter — "cannot be filtered against self"). by_age skips the age
+// filter, by_sex skips sex, etc.; histogram/concentration/timeline respect all
+// filters since they're distribution/trend, not grouped-by-a-filter-dimension.
+// =============================================================================
+$ageOrder = ['14-24' => 0, '25-34' => 1, '35-44' => 2, '45-54' => 3, '55-64' => 4, '65+' => 5];
+$sexOrder = ['M' => 0, 'F' => 1, 'X' => 2];
+$ageBucketFn = fn($v) => age_bucket($v === null || $v === '' ? null : (int)$v);
+$sexBucketFn = fn($v) => $v ?: null;
+$orderBy = function (array &$arr, array $order): void {
+    usort($arr, fn($a, $b) => ($order[$a['bucket']] ?? 99) <=> ($order[$b['bucket']] ?? 99));
+};
+
+[$ageWhere, $ageParams] = $buildFilters(['age']);
+$byAge = summarize_buckets(fetch_financials($pdo, $ageWhere, $ageParams), fn($r) => $ageBucketFn($r['varsta']));
+$orderBy($byAge, $ageOrder);
+
+[$sexWhere, $sexParams] = $buildFilters(['sex']);
+$bySex = summarize_buckets(fetch_financials($pdo, $sexWhere, $sexParams), fn($r) => $sexBucketFn($r['sex']));
+$orderBy($bySex, $sexOrder);
+
+$compositionByAge = composition_by($pdo, 'varsta', $ageWhere, $ageParams, $ageBucketFn);
+$compositionBySex = composition_by($pdo, 'sex', $sexWhere, $sexParams, $sexBucketFn);
+foreach (['asset', 'datorii'] as $k) {
+    $orderBy($compositionByAge[$k], $ageOrder);
+    $orderBy($compositionBySex[$k], $sexOrder);
+}
+
+$ownershipByAge = ownership_by($pdo, 'varsta', $ageWhere, $ageParams, $ageBucketFn);
+$orderBy($ownershipByAge, $ageOrder);
+$ownershipBySex = ownership_by($pdo, 'sex', $sexWhere, $sexParams, $sexBucketFn);
+$orderBy($ownershipBySex, $sexOrder);
+
+$userNet   = $userLatest !== null ? (int)$userLatest['net_worth'] : null;
+$histogram = compute_histogram($globalNet, $userNet);
+$concentration = compute_concentration($globalAsset);
+
+[$tlWhere, $tlParams] = $buildFilters();
+$timeline = compute_timeline($pdo, $tlWhere, $tlParams);
+
+[$diaWhere, $diaParams] = $buildFilters(['judet']);
+$diaspora = compute_diaspora($pdo, $diaWhere, $diaParams);
+
 $result = [
     'filters' => [
         'judet' => $judet,
@@ -443,6 +732,16 @@ $result = [
     'by_judet' => $byJudet,
     'by_domeniu' => $byDomeniu,
     'by_persoane_intretinere' => $byPI,
+    'by_age' => $byAge,
+    'by_sex' => $bySex,
+    'composition_by_age' => $compositionByAge,
+    'composition_by_sex' => $compositionBySex,
+    'ownership_by_age' => $ownershipByAge,
+    'ownership_by_sex' => $ownershipBySex,
+    'histogram' => $histogram,
+    'concentration' => $concentration,
+    'timeline' => $timeline,
+    'diaspora' => $diaspora,
     'optimism' => [
         'optimist' => [
             'count' => count($optimistNet),
@@ -462,6 +761,7 @@ $result = [
         'judete' => JUDETE,
         'domenii' => DOMENII,
         'age_groups' => ['14-24','25-34','35-44','45-54','55-64','65+'],
+        'sex_labels' => ['M' => 'Masculin', 'F' => 'Feminin', 'X' => 'Altul'],
         'fx' => ($fx = fx_latest($pdo)) ? ['eur_ron' => $fx['eur_ron'], 'date' => $fx['rate_date']] : null,
     ],
 ];

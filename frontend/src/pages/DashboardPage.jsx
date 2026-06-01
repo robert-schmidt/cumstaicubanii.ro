@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { fetchStats } from '../lib/api.js';
 import { formatRon, formatNumber, formatMoney } from '../lib/format.js';
 import FAQ from '../components/FAQ.jsx';
@@ -12,6 +13,38 @@ const ASSET_PALETTE = ['#10b981', '#14b8a6', '#0ea5e9', '#22c55e', '#059669', '#
 // when the user flips to EUR we divide RON values by the BNR rate on the fly.
 const MoneyContext = createContext(formatRon);
 const useMoney = () => useContext(MoneyContext);
+
+// Instant, styled hover tooltip. Renders the box via a portal to <body> so it
+// escapes any `overflow-hidden` / transformed ancestor (bar tracks, framer
+// cards) and follows the cursor — unlike the native `title` attribute, which is
+// plain and only appears after a ~1s delay. Pass `label` (string/node) and the
+// element type via `as`; remaining props (style, key, …) pass through.
+function HoverTip({ label, children, as: Tag = 'div', className = '', style, ...rest }) {
+  const [pos, setPos] = useState(null);
+  const track = (e) => setPos({ x: e.clientX, y: e.clientY });
+  return (
+    <Tag
+      className={className}
+      style={style}
+      onMouseEnter={label ? track : undefined}
+      onMouseMove={label ? track : undefined}
+      onMouseLeave={() => setPos(null)}
+      {...rest}
+    >
+      {children}
+      {label && pos && createPortal(
+        <div
+          style={{ position: 'fixed', left: pos.x, top: pos.y - 14, transform: 'translate(-50%, -100%)', zIndex: 60, maxWidth: '18rem' }}
+          className="pointer-events-none rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-medium leading-snug text-white shadow-lg text-center"
+        >
+          {label}
+          <span className="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-slate-900" />
+        </div>,
+        document.body
+      )}
+    </Tag>
+  );
+}
 
 export default function DashboardPage({ uuid, sid }) {
   const [filters, setFilters] = useState({ judet: '', sex: '', ageGroup: '' });
@@ -37,7 +70,8 @@ export default function DashboardPage({ uuid, sid }) {
   if (error) return <div className="max-w-3xl mx-auto px-4 py-16 text-rose-600">{error}</div>;
   if (!data) return null;
 
-  const { user, population, breakdown, by_judet, by_domeniu, by_persoane_intretinere, optimism, meta, submissions_approved, submissions_flagged } = data;
+  const { user, population, breakdown, by_judet, by_domeniu, by_persoane_intretinere, optimism, meta, submissions_approved, submissions_flagged,
+    by_age, by_sex, composition_by_age, composition_by_sex, ownership_by_age, ownership_by_sex, histogram, concentration, timeline, diaspora } = data;
 
   return (
     <MoneyContext.Provider value={fmt}>
@@ -123,6 +157,69 @@ export default function DashboardPage({ uuid, sid }) {
           <OptimismMedians optimism={optimism} />
         </Card>
       </section>
+
+      <StatsSection title="Statistici demografice & distribuție">
+        <p className="text-sm text-slate-500">
+          Defalcări pe grupuri demografice și distribuția averii. Filtrele de mai sus se aplică, dar grupul afișat
+          într-un grafic e mereu exclus din filtru (nu te poți filtra „pe vârstă” și grupa tot pe vârstă).
+        </p>
+
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card title="Net worth median pe vârstă">
+            <GroupBreakdown rows={by_age} />
+          </Card>
+          <Card title="Net worth median pe sex">
+            <GroupBreakdown rows={by_sex} labels={meta.sex_labels} />
+          </Card>
+        </section>
+
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card title="Compoziția asset-urilor pe vârstă">
+            <CompositionBars rows={composition_by_age.asset} palette={ASSET_PALETTE} />
+          </Card>
+          <Card title="Compoziția datoriilor pe vârstă">
+            <CompositionBars rows={composition_by_age.datorii} palette={DEBT_PALETTE} />
+          </Card>
+          <Card title="Compoziția asset-urilor pe sex">
+            <CompositionBars rows={composition_by_sex.asset} palette={ASSET_PALETTE} labels={meta.sex_labels} />
+          </Card>
+          <Card title="Compoziția datoriilor pe sex">
+            <CompositionBars rows={composition_by_sex.datorii} palette={DEBT_PALETTE} labels={meta.sex_labels} />
+          </Card>
+        </section>
+
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card title="Cine deține ce — pe vârstă">
+            <OwnershipGrid rows={ownership_by_age} />
+          </Card>
+          <Card title="Cine deține ce — pe sex">
+            <OwnershipGrid rows={ownership_by_sex} labels={meta.sex_labels} />
+          </Card>
+        </section>
+
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card title="Distribuția net worth">
+            <NetWorthHistogram histogram={histogram} hasUser={!!user} />
+          </Card>
+          <Card title="Concentrarea averii">
+            <WealthConcentration data={concentration} />
+          </Card>
+        </section>
+
+        <Card title="Cât de optimiști sunt, pe vârstă">
+          <OptimismRateByGroup rows={by_age} />
+        </Card>
+
+        <Card title="Evoluție în timp">
+          <Timeline rows={timeline} />
+        </Card>
+
+        {!filters.judet && (
+          <Card title="Diaspora vs România">
+            <DiasporaVsRomania data={diaspora} />
+          </Card>
+        )}
+      </StatsSection>
 
       <Card title="Întrebări frecvente">
         <FAQ />
@@ -406,11 +503,14 @@ function JudetList({ rows, userJudet }) {
           ? 'font-semibold text-amber-900'
           : (thin ? 'text-slate-400' : 'text-slate-700');
         const valueCls = thin ? 'text-slate-400' : 'text-slate-600';
+        const tip = thin
+          ? `${r.judet} — doar ${r.count} răspuns, date insuficiente`
+          : `${r.judet} — net worth median ${fmt(r.median_net)} (din ${r.count} răspunsuri)`;
         return (
-          <div
+          <HoverTip
             key={r.judet}
-            className={'flex items-center gap-3 py-1 ' + (isUser ? 'bg-amber-50 -mx-2 px-2 rounded' : '')}
-            title={thin ? `Doar ${r.count} răspuns — date insuficiente, rangul nu e relevant.` : undefined}
+            className={'flex items-center gap-3 py-1 cursor-help ' + (isUser ? 'bg-amber-50 -mx-2 px-2 rounded' : '')}
+            label={tip}
           >
             <span className={'w-28 text-sm truncate ' + labelCls}>
               {r.judet}{isUser && ' ★'}
@@ -420,7 +520,7 @@ function JudetList({ rows, userJudet }) {
             </div>
             <span className={'w-28 text-right text-sm ' + valueCls}>{fmt(r.median_net)}</span>
             <span className="w-10 text-right text-xs text-slate-400">n={r.count}</span>
-          </div>
+          </HoverTip>
         );
       })}
     </div>
@@ -498,19 +598,22 @@ function DomeniuList({ rows }) {
         const barCls = thin
           ? 'bg-slate-300'
           : (r.median_net >= 0 ? 'bg-emerald-500' : 'bg-rose-500');
+        const tip = thin
+          ? `${r.domeniu} — doar ${r.count} răspuns, date insuficiente`
+          : `${r.domeniu} — net worth median ${fmt(r.median_net)} (din ${r.count} răspunsuri)`;
         return (
-          <div
+          <HoverTip
             key={r.domeniu}
-            className="flex items-center gap-3 py-1"
-            title={thin ? `Doar ${r.count} răspuns — date insuficiente, rangul nu e relevant.` : undefined}
+            className="flex items-center gap-3 py-1 cursor-help"
+            label={tip}
           >
-            <span className={'w-40 text-sm truncate ' + (thin ? 'text-slate-400' : 'text-slate-700')} title={r.domeniu}>{r.domeniu}</span>
+            <span className={'w-40 text-sm truncate ' + (thin ? 'text-slate-400' : 'text-slate-700')}>{r.domeniu}</span>
             <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
               <div className={'h-full ' + barCls} style={{ width: pct + '%' }} />
             </div>
             <span className={'w-28 text-right text-sm ' + (thin ? 'text-slate-400' : 'text-slate-600')}>{fmt(r.median_net)}</span>
             <span className="w-10 text-right text-xs text-slate-400">n={r.count}</span>
-          </div>
+          </HoverTip>
         );
       })}
     </div>
@@ -729,26 +832,28 @@ function PersoaneStats({ rows }) {
         const valueCls = thin
           ? 'text-slate-400'
           : (negative ? 'text-rose-600' : 'text-emerald-600');
+        const label = r.bucket === '0' ? 'Fără persoane în întreținere'
+          : r.bucket === '1' ? '1 persoană'
+          : r.bucket === '4+' ? '4 sau mai multe persoane'
+          : `${r.bucket} persoane`;
+        const tip = thin
+          ? `${label} — doar ${r.count} răspuns, date insuficiente`
+          : `${label} — net worth median ${fmt(r.median_net)} (din ${r.count} răspunsuri)`;
         return (
-          <div key={r.bucket} title={thin ? `Doar ${r.count} răspuns — date insuficiente.` : undefined}>
+          <div key={r.bucket}>
             <div className="flex items-baseline justify-between text-sm mb-1">
-              <span className={'font-medium ' + (thin ? 'text-slate-400' : 'text-slate-800')}>
-                {r.bucket === '0' ? 'Fără persoane în întreținere'
-                  : r.bucket === '1' ? '1 persoană'
-                  : r.bucket === '4+' ? '4 sau mai multe persoane'
-                  : `${r.bucket} persoane`}
-              </span>
+              <span className={'font-medium ' + (thin ? 'text-slate-400' : 'text-slate-800')}>{label}</span>
               <span>
                 <span className={'font-semibold ' + valueCls}>{fmt(r.median_net)}</span>
                 <span className="ml-2 text-xs text-slate-400">n={r.count}</span>
               </span>
             </div>
-            <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden">
+            <HoverTip className="h-2.5 rounded-full bg-slate-100 overflow-hidden cursor-help" label={tip}>
               <motion.div
                 initial={{ width: 0 }} animate={{ width: pct + '%' }} transition={{ duration: 0.6 }}
                 className={'h-full rounded-full ' + barCls}
               />
-            </div>
+            </HoverTip>
           </div>
         );
       })}
@@ -882,6 +987,332 @@ function OptimismMedians({ optimism }) {
           </strong>.</>
         )}
       </p>
+    </div>
+  );
+}
+
+// =============================================================================
+// Cross-dimensional statistics ("Statistici demografice" section). Each chart
+// is grouped by a dimension excluded from the active filter, so it stays
+// meaningful no matter what the user filters on. All money values go through
+// useMoney() so the RON/EUR toggle reformats them. Every bar carries a `title`
+// so hovering it spells out exactly what it represents.
+// =============================================================================
+
+// Map a raw bucket key to a display label (sex codes → words; age passes through).
+function bucketLabel(bucket, labels) {
+  return (labels && labels[bucket]) || bucket;
+}
+
+function StatsSection({ title, children }) {
+  return (
+    <section className="border-t border-slate-200 pt-6">
+      <h2 className="text-lg font-bold text-slate-900">{title}</h2>
+      <div className="mt-6 space-y-6">{children}</div>
+    </section>
+  );
+}
+
+// Hoverable badge: dotted underline signals there's an explanatory tooltip.
+function Badge({ title, children }) {
+  return (
+    <HoverTip as="span" label={title} className="cursor-help underline decoration-dotted decoration-slate-300 underline-offset-2">
+      {children}
+    </HoverTip>
+  );
+}
+
+// Net worth median per demographic bucket + prevalence/leverage badges.
+// Reused for by_age and by_sex (sex passes a labels map).
+function GroupBreakdown({ rows, labels }) {
+  const fmt = useMoney();
+  if (!rows || !rows.length) return <p className="text-sm text-slate-500">Fără date.</p>;
+  const max = Math.max(1, ...rows.filter(r => r.count >= MIN_SAMPLE).map(r => Math.abs(r.median_net)));
+  return (
+    <div className="space-y-3">
+      {rows.map(r => {
+        const thin = r.count < MIN_SAMPLE;
+        const pct = Math.min(100, (Math.abs(r.median_net) / max) * 100);
+        const negative = r.median_net < 0;
+        const barCls = thin ? 'bg-slate-300' : (negative ? 'bg-rose-500' : 'bg-emerald-500');
+        const valueCls = thin ? 'text-slate-400' : (negative ? 'text-rose-600' : 'text-emerald-600');
+        const tip = thin
+          ? `${bucketLabel(r.bucket, labels)} — doar ${r.count} răspuns, date insuficiente`
+          : `${bucketLabel(r.bucket, labels)} — net worth median ${fmt(r.median_net)} (asset-uri − datorii), din ${r.count} răspunsuri`;
+        return (
+          <div key={r.bucket}>
+            <div className="flex items-baseline justify-between text-sm mb-1">
+              <span className={'font-medium ' + (thin ? 'text-slate-400' : 'text-slate-800')}>{bucketLabel(r.bucket, labels)}</span>
+              <span>
+                <span className={'font-semibold ' + valueCls}>{fmt(r.median_net)}</span>
+                <span className="ml-2 text-xs text-slate-400">n={r.count}</span>
+              </span>
+            </div>
+            <HoverTip className="h-2.5 rounded-full bg-slate-100 overflow-hidden cursor-help" label={tip}>
+              <motion.div initial={{ width: 0 }} animate={{ width: pct + '%' }} transition={{ duration: 0.6 }}
+                className={'h-full rounded-full ' + barCls} />
+            </HoverTip>
+            {!thin && (
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-500">
+                <Badge title="Procentul din grup cu net worth negativ — datorează mai mult decât deține.">
+                  {r.pct_underwater}% sub zero
+                </Badge>
+                <Badge title="Procentul din grup care a raportat cel puțin o datorie.">
+                  {r.pct_with_datorii}% au datorii
+                </Badge>
+                <Badge title="Procentul din grup care a raportat cel puțin un asset.">
+                  {r.pct_with_asset}% au asset-uri
+                </Badge>
+                <Badge title="Mediana raportului datorii ÷ asset-uri (doar cei cu asset-uri). 100% = datorii egale cu asset-urile; peste 100% = datorii mai mari decât tot ce dețin.">
+                  levier {Math.round((r.median_leverage ?? 0) * 100)}%
+                </Badge>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <p className="text-xs text-slate-500 pt-1">
+        Bară roșie = net worth median negativ. „Levier” = mediana raportului datorii / asset-uri pentru cei cu asset-uri.
+      </p>
+    </div>
+  );
+}
+
+// 100%-stacked composition of asset-uri or datorii per bucket.
+function CompositionBars({ rows, palette, labels }) {
+  const fmt = useMoney();
+  if (!rows || !rows.length) return <p className="text-sm text-slate-500">Fără date.</p>;
+  // Stable type order + colors across every bucket.
+  const types = [];
+  rows.forEach(r => Object.keys(r.by_type).forEach(t => { if (!types.includes(t)) types.push(t); }));
+  const colorOf = (t) => palette[types.indexOf(t) % palette.length];
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+        {types.map(t => (
+          <span key={t} className="inline-flex items-center gap-1 text-slate-600">
+            <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: colorOf(t) }} />{t}
+          </span>
+        ))}
+      </div>
+      {rows.map(r => {
+        const total = r.total || 1;
+        const segs = types.map(t => ({ t, v: r.by_type[t] || 0 })).filter(s => s.v > 0);
+        return (
+          <div key={r.bucket}>
+            <div className="flex items-baseline justify-between text-sm mb-1">
+              <span className="font-medium text-slate-800">{bucketLabel(r.bucket, labels)}</span>
+              <span className="text-xs text-slate-400">total {fmt(r.total)}</span>
+            </div>
+            <div className="flex h-4 rounded-full overflow-hidden bg-slate-100">
+              {segs.map(s => (
+                <HoverTip key={s.t} className="h-full cursor-help"
+                  label={`${bucketLabel(r.bucket, labels)} · ${s.t}: ${fmt(s.v)} (${Math.round(s.v / total * 100)}% din total)`}
+                  style={{ width: (s.v / total * 100) + '%', background: colorOf(s.t) }} />
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const OWNERSHIP_METRICS = [
+  { key: 'mortgage', label: 'Credit imobiliar', color: '#ef4444' },
+  { key: 'crypto', label: 'Crypto', color: '#8b5cf6' },
+  { key: 'real_estate', label: 'Imobile', color: '#10b981' },
+];
+
+// % of each bucket holding mortgage / crypto / real estate.
+function OwnershipGrid({ rows, labels }) {
+  if (!rows || !rows.length) return <p className="text-sm text-slate-500">Fără date.</p>;
+  return (
+    <div className="space-y-4">
+      {OWNERSHIP_METRICS.map(m => (
+        <div key={m.key}>
+          <div className="text-sm font-medium text-slate-700 mb-1.5">{m.label}</div>
+          <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${rows.length}, minmax(0, 1fr))` }}>
+            {rows.map(r => {
+              const v = r[m.key] ?? 0;
+              const thin = r.count < MIN_SAMPLE;
+              return (
+                <HoverTip
+                  key={r.bucket}
+                  className="flex flex-col items-center cursor-help"
+                  label={thin
+                    ? `${bucketLabel(r.bucket, labels)} — doar ${r.count} răspuns, date insuficiente`
+                    : `${bucketLabel(r.bucket, labels)} — ${v}% au „${m.label}” (din ${r.count} răspunsuri)`}
+                >
+                  <span className={'text-xs mb-1 ' + (thin ? 'text-slate-400' : 'text-slate-600')}>{v}%</span>
+                  <div className="w-full h-20 bg-slate-50 rounded flex items-end overflow-hidden">
+                    <motion.div initial={{ height: 0 }} animate={{ height: v + '%' }} transition={{ duration: 0.5 }}
+                      className="w-full" style={{ background: thin ? '#cbd5e1' : m.color }} />
+                  </div>
+                  <span className="mt-1 text-[10px] text-slate-400 text-center leading-tight">{bucketLabel(r.bucket, labels)}</span>
+                </HoverTip>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Net worth distribution. RON edges arrive raw; fmt() reformats them for EUR.
+function NetWorthHistogram({ histogram, hasUser }) {
+  const fmt = useMoney();
+  if (!histogram || !histogram.buckets) return <p className="text-sm text-slate-500">Fără date.</p>;
+  const { buckets, user_bucket } = histogram;
+  const max = Math.max(1, ...buckets.map(b => b.count));
+  const edgeLabel = (b) => {
+    if (b.min === null) return `< ${fmt(0)}`;
+    if (b.max === null) return `${fmt(b.min)}+`;
+    return `${fmt(b.min)}–${fmt(b.max)}`;
+  };
+  return (
+    <div>
+      <div className="flex items-end gap-2">
+        {buckets.map((b, i) => {
+          const h = (b.count / max) * 100;
+          const isUser = hasUser && user_bucket === i;
+          const fill = isUser ? 'bg-amber-500' : (b.min === null ? 'bg-rose-400' : 'bg-sky-500');
+          const tip = `${b.count} utilizatori cu net worth ${edgeLabel(b)}` + (isUser ? ' — aici te încadrezi tu' : '');
+          return (
+            <HoverTip key={i} className="flex-1 flex flex-col items-center cursor-help" label={tip}>
+              {isUser && <span className="text-[10px] font-semibold text-amber-700 whitespace-nowrap">ești aici ↓</span>}
+              <span className="text-xs text-slate-500 mb-1">{b.count}</span>
+              <div className="w-full h-40 bg-slate-50 rounded flex items-end overflow-hidden">
+                <motion.div initial={{ height: 0 }} animate={{ height: h + '%' }} transition={{ duration: 0.5 }}
+                  className={'w-full ' + fill} />
+              </div>
+              <span className="mt-2 text-[10px] text-slate-400 text-center leading-tight">{edgeLabel(b)}</span>
+            </HoverTip>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function WealthConcentration({ data }) {
+  if (!data || !data.count) return <p className="text-sm text-slate-500">Fără date.</p>;
+  const cells = [
+    { label: 'Top 1% dețin', value: data.top1_pct + '%', accent: 'text-rose-600' },
+    { label: 'Top 10% dețin', value: data.top10_pct + '%', accent: 'text-amber-600' },
+    { label: 'Jumătatea de jos deține', value: data.bottom50_pct + '%', accent: 'text-slate-700' },
+    { label: 'Coeficient Gini', value: Number(data.gini).toFixed(2), accent: 'text-sky-600' },
+  ];
+  return (
+    <div>
+      <div className="grid grid-cols-2 gap-4">
+        {cells.map(c => (
+          <div key={c.label} className="rounded-xl border border-slate-200 p-4">
+            <p className="text-xs uppercase tracking-wider text-slate-500">{c.label}</p>
+            <p className={'mt-1 text-2xl font-bold ' + c.accent}>{c.value}</p>
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-xs text-slate-500">
+        Din totalul asset-urilor raportate de {data.count} utilizatori. Gini: 0 = egalitate perfectă, 1 = o singură persoană deține tot.
+      </p>
+    </div>
+  );
+}
+
+function OptimismRateByGroup({ rows }) {
+  if (!rows || !rows.length) return <p className="text-sm text-slate-500">Fără date.</p>;
+  return (
+    <div className="space-y-3">
+      {rows.map(r => {
+        const thin = r.count < MIN_SAMPLE;
+        const v = r.optimist_rate ?? 0;
+        const tip = thin
+          ? `${r.bucket} — doar ${r.count} răspuns, date insuficiente`
+          : `${r.bucket} — ${v}% s-au declarat optimiști (din ${r.count} răspunsuri)`;
+        return (
+          <div key={r.bucket}>
+            <div className="flex items-baseline justify-between text-sm mb-1">
+              <span className={'font-medium ' + (thin ? 'text-slate-400' : 'text-slate-800')}>{r.bucket}</span>
+              <span>
+                <span className={'font-semibold ' + (thin ? 'text-slate-400' : 'text-emerald-600')}>{v}%</span>
+                <span className="ml-2 text-xs text-slate-400">n={r.count}</span>
+              </span>
+            </div>
+            <HoverTip className="h-2.5 rounded-full bg-slate-100 overflow-hidden cursor-help" label={tip}>
+              <motion.div initial={{ width: 0 }} animate={{ width: v + '%' }} transition={{ duration: 0.6 }}
+                className={'h-full rounded-full ' + (thin ? 'bg-slate-300' : 'bg-emerald-500')} />
+            </HoverTip>
+          </div>
+        );
+      })}
+      <p className="text-xs text-slate-500 pt-1">% care s-au declarat optimiști cu privire la situația lor financiară.</p>
+    </div>
+  );
+}
+
+function Timeline({ rows }) {
+  const fmt = useMoney();
+  if (!rows || !rows.length) return <p className="text-sm text-slate-500">Fără date.</p>;
+  const totalCount = rows.reduce((s, r) => s + r.count, 0);
+  return (
+    <div>
+      <div className="h-64">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={rows} margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+            <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+            <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={(v) => fmt(v)} width={72} />
+            <Tooltip
+              formatter={(v) => [fmt(v), 'Net worth median']}
+              labelFormatter={(l) => `Luna ${l}`}
+            />
+            <Line type="monotone" dataKey="median_net" stroke="#0ea5e9" strokeWidth={2} dot={{ r: 3 }} name="median_net" />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      <p className="text-xs text-slate-500 mt-2">
+        Net worth median pe luna în care au răspuns oamenii · {totalCount} răspunsuri în total.
+      </p>
+    </div>
+  );
+}
+
+function DiasporaVsRomania({ data }) {
+  const fmt = useMoney();
+  if (!data) return <p className="text-sm text-slate-500">Fără date.</p>;
+  const rows = [
+    { label: '🌍 Diaspora', ...data.diaspora, color: '#0ea5e9' },
+    { label: '🇷🇴 România', ...data.romania, color: '#10b981' },
+  ];
+  if (rows.every(r => !r.count)) return <p className="text-sm text-slate-500">Fără date.</p>;
+  const max = Math.max(1, ...rows.map(r => Math.abs(r.median_net)));
+  return (
+    <div className="space-y-5">
+      {rows.map(r => {
+        const pct = Math.min(100, (Math.abs(r.median_net) / max) * 100);
+        const negative = r.median_net < 0;
+        return (
+          <div key={r.label}>
+            <div className="flex items-baseline justify-between mb-1.5">
+              <span className="font-medium text-slate-800">{r.label}</span>
+              <span className="text-sm">
+                <span className={'font-semibold ' + (negative ? 'text-rose-600' : 'text-slate-900')}>{fmt(r.median_net)}</span>
+                <span className="ml-2 text-xs text-slate-400">n={r.count}</span>
+              </span>
+            </div>
+            <HoverTip
+              className="h-3 rounded-full bg-slate-100 overflow-hidden cursor-help"
+              label={`${r.label} — net worth median ${fmt(r.median_net)} (din ${r.count} răspunsuri)`}
+            >
+              <motion.div initial={{ width: 0 }} animate={{ width: pct + '%' }} transition={{ duration: 0.6 }}
+                className="h-full rounded-full" style={{ background: negative ? '#f43f5e' : r.color }} />
+            </HoverTip>
+          </div>
+        );
+      })}
+      <p className="text-xs text-slate-500 pt-1">Net worth median. „Diaspora” = utilizatorii care au ales județul Diaspora.</p>
     </div>
   );
 }
