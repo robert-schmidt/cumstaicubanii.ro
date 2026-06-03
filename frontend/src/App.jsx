@@ -46,6 +46,8 @@ export default function App() {
         <Outlet />
       </main>
 
+      <RevolutReferral />
+
       <footer className="border-t border-slate-200 bg-white">
         <div className="max-w-6xl mx-auto px-4 py-6 text-xs text-slate-500 space-y-2">
           <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
@@ -62,16 +64,6 @@ export default function App() {
                 <span aria-hidden="true">🔍</span>
                 <span>Verifică datele</span>
               </NavLink>
-              <a
-                href="https://buymeacoffee.com/robbschmidt"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-slate-500 hover:text-amber-700 transition"
-                title="Susține proiectul"
-              >
-                <span aria-hidden="true">☕</span>
-                <span>Buy me a coffee</span>
-              </a>
               <a
                 href="https://www.reddit.com/r/programare/comments/1to2mqc/voi_cum_stati_cu_banii/"
                 target="_blank"
@@ -106,6 +98,89 @@ export default function App() {
 
       {sid && <SidBadge sid={sid} />}
     </div>
+  );
+}
+
+function RevolutReferral() {
+  return (
+    <section className="border-t border-slate-800 bg-slate-900 text-slate-200">
+      <div className="max-w-6xl mx-auto px-4 py-10">
+        <div className="max-w-3xl">
+          <span className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-slate-400 font-medium">
+            <span aria-hidden="true">⚡</span> Recomandare
+          </span>
+          <h2 className="mt-2 text-xl sm:text-2xl font-semibold text-white tracking-tight">
+            Vrei ca banii tăi să fie ușor de administrat și să beneficieze de cele mai bune dobânzi în LEI și EUR?
+          </h2>
+          <p className="mt-2 text-sm text-slate-400">
+            Folosește <span className="font-semibold text-white">Revolut</span> — cont gratuit, deschis în câteva
+            minute, fără bătăi de cap. Și tu, și noi primim un bonus când deschizi cont prin linkurile de mai jos.
+          </p>
+          <p className="mt-3 inline-flex items-center gap-1.5 text-xs text-slate-300">
+            <span aria-hidden="true">🏦</span>
+            Revolut este <span className="font-medium text-white">bancă licențiată în România</span>, depozitele fiind garantate conform legii.
+          </p>
+        </div>
+
+        <div className="mt-8 grid gap-4 md:grid-cols-2">
+          {/* Persoane fizice */}
+          <div className="rounded-2xl border border-slate-700 bg-slate-800/60 p-6 flex flex-col">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-white">Pentru persoane fizice</h3>
+              <span className="text-[11px] font-medium px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-300">
+                +225 RON bonus
+              </span>
+            </div>
+            <ul className="mt-4 space-y-2.5 text-sm text-slate-300 flex-1">
+              <li className="flex gap-2"><span className="text-emerald-400" aria-hidden="true">✓</span><span><span className="font-medium text-white">Dobânzi avantajoase</span> la conturile de economii, cu plată zilnică.</span></li>
+              <li className="flex gap-2"><span className="text-emerald-400" aria-hidden="true">✓</span><span><span className="font-medium text-white">Comisioane mici</span> la plăți și schimb valutar la curs interbancar.</span></li>
+              <li className="flex gap-2"><span className="text-emerald-400" aria-hidden="true">✓</span><span><span className="font-medium text-white">Investiții în stocks &amp; crypto</span> direct din aplicație.</span></li>
+              <li className="flex gap-2"><span className="text-emerald-400" aria-hidden="true">✓</span><span>Card fizic și virtual, Apple Pay / Google Pay, plăți contactless.</span></li>
+            </ul>
+            <a
+              href="https://revolut.com/referral/?referral-code=robertsqu!JUN1-26-AR-H3&geo-redirect"
+              target="_blank"
+              rel="noopener noreferrer sponsored"
+              className="mt-6 inline-flex items-center justify-center gap-2 rounded-full bg-white text-slate-900 font-medium text-sm px-5 py-2.5 hover:bg-slate-100 transition"
+            >
+              Deschide cont personal
+              <span aria-hidden="true">→</span>
+            </a>
+            <p className="mt-3 text-[11px] text-slate-500">
+              Bonusul se acordă după ce îți verifici identitatea, adaugi bani și faci 3 plăți de minimum 15 RON. Se aplică T&amp;C Revolut.
+            </p>
+          </div>
+
+          {/* Firme */}
+          <div className="rounded-2xl border border-slate-700 bg-slate-800/60 p-6 flex flex-col">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-white">Pentru firme</h3>
+              <span className="text-[11px] font-medium px-2 py-1 rounded-full bg-orange-500/15 text-orange-300">
+                +750 RON bonus
+              </span>
+            </div>
+            <ul className="mt-4 space-y-2.5 text-sm text-slate-300 flex-1">
+              <li className="flex gap-2"><span className="text-orange-400" aria-hidden="true">✓</span><span><span className="font-medium text-white">Carduri pentru echipă</span>, fizice și virtuale, cu limite și categorii de cheltuieli.</span></li>
+              <li className="flex gap-2"><span className="text-orange-400" aria-hidden="true">✓</span><span><span className="font-medium text-white">Schimb valutar avantajos</span> — peste 30 de monede, fără comisioane ascunse.</span></li>
+              <li className="flex gap-2"><span className="text-orange-400" aria-hidden="true">✓</span><span><span className="font-medium text-white">Integrări contabile</span> cu Xero, QuickBooks, FreeAgent și Slack.</span></li>
+              <li className="flex gap-2"><span className="text-orange-400" aria-hidden="true">✓</span><span>Plăți și transferuri urmărite în timp real, totul într-un singur loc.</span></li>
+            </ul>
+            <a
+              href="https://business.revolut.com/signup?promo=C2B-MAY2-26-AR-H2&ext=robertsqu&context=C2B_REFERRAL"
+              target="_blank"
+              rel="noopener noreferrer sponsored"
+              className="mt-6 inline-flex items-center justify-center gap-2 rounded-full bg-white text-slate-900 font-medium text-sm px-5 py-2.5 hover:bg-slate-100 transition"
+            >
+              Deschide cont de business
+              <span aria-hidden="true">→</span>
+            </a>
+            <p className="mt-3 text-[11px] text-slate-500">
+              Conturile Revolut Pro nu sunt eligibile. Bonusul se acordă după verificare și 3 plăți de minimum 30 RON. Se aplică T&amp;C Revolut.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
