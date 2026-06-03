@@ -114,11 +114,11 @@ function RevolutReferral() {
           </h2>
           <p className="mt-2 text-sm text-slate-400">
             Folosește <span className="font-semibold text-white">Revolut</span> — cont gratuit, deschis în câteva
-            minute, fără bătăi de cap. Și tu, și noi primim un bonus când deschizi cont prin linkurile de mai jos.
+            minute, fără bătăi de cap.
           </p>
           <p className="mt-3 inline-flex items-center gap-1.5 text-xs text-slate-300">
             <span aria-hidden="true">🏦</span>
-            Revolut este <span className="font-medium text-white">bancă licențiată în România</span>, depozitele fiind garantate conform legii.
+            Revolut este <span className="font-medium text-white">bancă licențiată în România,</span> depozitele fiind garantate conform legii.
           </p>
         </div>
 
