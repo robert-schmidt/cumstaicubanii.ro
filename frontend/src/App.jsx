@@ -127,9 +127,6 @@ function RevolutReferral() {
           <div className="rounded-2xl border border-slate-700 bg-slate-800/60 p-6 flex flex-col">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-semibold text-white">Pentru persoane fizice</h3>
-              <span className="text-[11px] font-medium px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-300">
-                +225 RON bonus
-              </span>
             </div>
             <ul className="mt-4 space-y-2.5 text-sm text-slate-300 flex-1">
               <li className="flex gap-2"><span className="text-emerald-400" aria-hidden="true">✓</span><span><span className="font-medium text-white">Dobânzi avantajoase</span> la conturile de economii, cu plată zilnică.</span></li>
@@ -155,9 +152,6 @@ function RevolutReferral() {
           <div className="rounded-2xl border border-slate-700 bg-slate-800/60 p-6 flex flex-col">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-semibold text-white">Pentru firme</h3>
-              <span className="text-[11px] font-medium px-2 py-1 rounded-full bg-orange-500/15 text-orange-300">
-                +750 RON bonus
-              </span>
             </div>
             <ul className="mt-4 space-y-2.5 text-sm text-slate-300 flex-1">
               <li className="flex gap-2"><span className="text-orange-400" aria-hidden="true">✓</span><span><span className="font-medium text-white">Carduri pentru echipă</span>, fizice și virtuale, cu limite și categorii de cheltuieli.</span></li>
@@ -166,7 +160,7 @@ function RevolutReferral() {
               <li className="flex gap-2"><span className="text-orange-400" aria-hidden="true">✓</span><span>Plăți și transferuri urmărite în timp real, totul într-un singur loc.</span></li>
             </ul>
             <a
-              href="https://business.revolut.com/signup?promo=C2B-MAY2-26-AR-H2&ext=robertsqu&context=C2B_REFERRAL"
+              href="https://business.revolut.com/signup?promo=referabusiness&ext=340e8152-1755-e268-0300-19d9ea6cf156&context=B2B_REFERRAL"
               target="_blank"
               rel="noopener noreferrer sponsored"
               className="mt-6 inline-flex items-center justify-center gap-2 rounded-full bg-white text-slate-900 font-medium text-sm px-5 py-2.5 hover:bg-slate-100 transition"
