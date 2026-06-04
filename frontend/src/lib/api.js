@@ -43,6 +43,21 @@ export async function fetchFeedback({ uuid, kind, type, judet, status, sort, off
   return r.json();
 }
 
+export async function sendContact({ name, email, message, website }) {
+  const r = await fetch(`${BASE}/contact.php`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, email, message, website }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const err = new Error(j.error || 'Trimiterea a eșuat.');
+    err.fields = j.fields;
+    throw err;
+  }
+  return j;
+}
+
 export async function postFeedbackVote({ uuid, submission_id, vote }) {
   const r = await fetch(`${BASE}/feedback.php`, {
     method: 'POST',

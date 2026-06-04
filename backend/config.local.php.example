@@ -16,4 +16,12 @@ return [
     // Then paste the resulting $2y$... string below.
     // Leave empty/null to disable /admin entirely.
     'admin_password_hash' => null,
+
+    // Postmark (contact form). `postmark_token` is the "Server API token" from
+    // your Postmark server. `contact_from` must be a verified Sender Signature
+    // or sit on a verified domain; `contact_to` is where messages land.
+    // Leave the token empty to disable the contact form (it returns 503).
+    'postmark_token' => '',
+    'contact_from'   => 'no-reply@cumstaicubanii.ro',
+    'contact_to'     => 'contact@cumstaicubanii.ro',
 ];

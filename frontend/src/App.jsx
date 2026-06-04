@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Outlet, Link, NavLink, useLocation } from 'react-router-dom';
 import { hasSubmitted, resetSubmission, getSid, onAuthChange } from './lib/identity.js';
+import ContactModal from './components/ContactModal.jsx';
 
 function readAuth() {
   return { sid: getSid(), loggedIn: hasSubmitted() || !!getSid() };
@@ -9,6 +10,7 @@ function readAuth() {
 export default function App() {
   const location = useLocation();
   const [{ sid, loggedIn }, setAuth] = useState(readAuth);
+  const [contactOpen, setContactOpen] = useState(false);
   useEffect(() => onAuthChange(() => setAuth(readAuth())), []);
   return (
     <div className="min-h-screen flex flex-col">
@@ -76,18 +78,18 @@ export default function App() {
                 </svg>
                 <span>Reddit</span>
               </a>
-              <a
-                href="https://github.com/robert-schmidt/cumstaicubanii.ro"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-slate-500 hover:text-slate-900 transition"
-                title="Cod sursă pe GitHub"
+              <button
+                type="button"
+                onClick={() => setContactOpen(true)}
+                className="inline-flex items-center gap-1.5 text-slate-500 hover:text-emerald-700 transition"
+                title="Trimite-ne un mesaj"
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.92.58.1.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.7-3.87-1.54-3.87-1.54-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.76 2.69 1.25 3.35.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.46.11-3.04 0 0 .97-.31 3.18 1.18.92-.26 1.91-.39 2.9-.39.99 0 1.98.13 2.9.39 2.21-1.49 3.18-1.18 3.18-1.18.62 1.58.23 2.75.11 3.04.74.81 1.18 1.84 1.18 3.1 0 4.43-2.69 5.41-5.25 5.69.41.36.78 1.06.78 2.14 0 1.55-.01 2.8-.01 3.18 0 .31.21.67.79.56 4.57-1.53 7.86-5.84 7.86-10.92C23.5 5.65 18.35.5 12 .5Z"/>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M4 4h16v16H4z" />
+                  <path d="M4 6l8 6 8-6" />
                 </svg>
-                <span>GitHub</span>
-              </a>
+                <span>Contact</span>
+              </button>
             </div>
           </div>
           <p className="text-slate-400">
@@ -97,6 +99,8 @@ export default function App() {
       </footer>
 
       {sid && <SidBadge sid={sid} />}
+
+      <ContactModal open={contactOpen} onClose={() => setContactOpen(false)} />
     </div>
   );
 }
@@ -143,9 +147,6 @@ function RevolutReferral() {
               Deschide cont personal
               <span aria-hidden="true">→</span>
             </a>
-            <p className="mt-3 text-[11px] text-slate-500">
-              Bonusul se acordă după ce îți verifici identitatea, adaugi bani și faci 3 plăți de minimum 15 RON. Se aplică T&amp;C Revolut.
-            </p>
           </div>
 
           {/* Firme */}
@@ -168,9 +169,6 @@ function RevolutReferral() {
               Deschide cont de business
               <span aria-hidden="true">→</span>
             </a>
-            <p className="mt-3 text-[11px] text-slate-500">
-              Conturile Revolut Pro nu sunt eligibile. Bonusul se acordă după verificare și 3 plăți de minimum 30 RON. Se aplică T&amp;C Revolut.
-            </p>
           </div>
         </div>
       </div>
