@@ -133,7 +133,8 @@ function RevolutReferral() {
               <h3 className="text-base font-semibold text-white">Pentru persoane fizice</h3>
             </div>
             <ul className="mt-4 space-y-2.5 text-sm text-slate-300 flex-1">
-              <li className="flex gap-2"><span className="text-emerald-400" aria-hidden="true">✓</span><span><span className="font-medium text-white">Dobânzi avantajoase</span> la conturile de economii, cu plată zilnică.</span></li>
+              <li className="flex gap-2"><span className="text-emerald-400" aria-hidden="true">✓</span><span><span className="font-medium text-white">Economii în LEI cu dobândă de până la 4,25% pe an</span>, plătită zilnic.</span></li>
+              <li className="flex gap-2"><span className="text-emerald-400" aria-hidden="true">✓</span><span><span className="font-medium text-white">Fonduri flexibile în EUR cu randament de până la ~2,1% pe an</span> (net), tot cu plată zilnică.</span></li>
               <li className="flex gap-2"><span className="text-emerald-400" aria-hidden="true">✓</span><span><span className="font-medium text-white">Comisioane mici</span> la plăți și schimb valutar la curs interbancar.</span></li>
               <li className="flex gap-2"><span className="text-emerald-400" aria-hidden="true">✓</span><span><span className="font-medium text-white">Investiții în stocks &amp; crypto</span> direct din aplicație.</span></li>
               <li className="flex gap-2"><span className="text-emerald-400" aria-hidden="true">✓</span><span>Card fizic și virtual, Apple Pay / Google Pay, plăți contactless.</span></li>
@@ -171,6 +172,10 @@ function RevolutReferral() {
             </a>
           </div>
         </div>
+
+        <p className="mt-4 text-[11px] text-slate-500">
+          Dobânzile sunt variabile și depind de planul ales (Standard, Premium, Metal, Ultra). Pentru economiile în LEI se reține 10% impozit la sursă, iar depozitele sunt garantate conform legii. Valori orientative, actualizate iunie 2026.
+        </p>
       </div>
     </section>
   );
