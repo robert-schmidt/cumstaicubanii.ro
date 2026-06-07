@@ -48,7 +48,7 @@ export default function App() {
         <Outlet />
       </main>
 
-      <RevolutReferral />
+      {location.pathname !== '/' && <RevolutReferral />}
 
       <footer className="border-t border-slate-200 bg-white">
         <div className="max-w-6xl mx-auto px-4 py-6 text-xs text-slate-500 space-y-2">
